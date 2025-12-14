@@ -10,7 +10,13 @@ This script runs two `terraform import` commands targeting the
 registry EKS module resources used in this repo.
 #>
 
-Set-Location -Path (Split-Path -Parent $MyInvocation.MyCommand.Definition)
+if ($env:GITHUB_WORKSPACE -and $env:GITHUB_WORKSPACE -ne "") {
+	Write-Host "GITHUB_WORKSPACE detected; changing to repository root: $env:GITHUB_WORKSPACE"
+	Set-Location -Path $env:GITHUB_WORKSPACE
+} else {
+	# When running locally, change to repo root (parent of scripts folder)
+	Set-Location -Path (Resolve-Path -Path "$PSScriptRoot\..").Path
+}
 
 Write-Host "Running terraform init (if needed)..."
 terraform init
