@@ -37,6 +37,9 @@ jobs:
         run: terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      - name: Import CloudWatch Log Groups (before plan)
+        run: pwsh ./scripts/import-loggroups.ps1
+
       - name: Install tflint
         run: |
           curl -sSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
@@ -60,8 +63,7 @@ jobs:
         run: terraform apply -auto-approve tfplan
         working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Import CloudWatch Log Groups
-        run: pwsh ./scripts/import-loggroups.ps1
+      # Import moved earlier to avoid create conflicts
 
       - name: Install kubectl
         run: |
