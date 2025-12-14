@@ -60,11 +60,15 @@ jobs:
         run: terraform apply -auto-approve tfplan
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      - name: Import CloudWatch Log Groups
+        run: pwsh ./scripts/import-loggroups.ps1
+
       - name: Install kubectl
         run: |
           curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
+
       - name: Install kubeval
         run: |
           curl -sLO https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
@@ -74,10 +78,8 @@ jobs:
 
       - name: Deploy backend manifests to eks-backend
         run: |
-          # get backend LB SG id from terraform outputs (if present)
           BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
           aws eks update-kubeconfig --name eks-backend --region us-east-1
-          # validate manifests
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
           kubectl apply --dry-run=client -f k8s/backend/namespace.yaml
           kubectl apply --dry-run=client -f k8s/backend/deployment.yaml
@@ -85,7 +87,6 @@ jobs:
           kubectl apply --dry-run=client -f k8s/backend/networkpolicy.yaml
           kubectl apply -f k8s/backend/namespace.yaml
           kubectl apply -f k8s/backend/deployment.yaml
-          # replace placeholder in service manifest with actual SG id (if any)
           if [ -n "$BACKEND_SG" ]; then
             sed "s|__BACKEND_SG__|$BACKEND_SG|g" k8s/backend/service.yaml | kubectl apply -f -
           else
