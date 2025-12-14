@@ -1,0 +1,41 @@
+name: sentinel-poc
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  infra:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Terraform init
+        working-directory: terraform/envs/us-east-1
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: terraform/envs/us-east-1
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: terraform/envs/us-east-1
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        working-directory: terraform/envs/us-east-1
+        run: terraform apply -auto-approve tfplan

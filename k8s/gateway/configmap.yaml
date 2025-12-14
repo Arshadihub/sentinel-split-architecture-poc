@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: proxy-conf
+  namespace: gateway
+data:
+  nginx.conf: |
+    events {}
+    http {
+      upstream backend {
+        server backend-svc.sentinel.svc.cluster.local:8080;
+      }
+      server {
+        listen 80;
+        location / {
+          proxy_pass http://backend;
+        }
+      }
+    }
