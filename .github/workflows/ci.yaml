@@ -111,19 +111,19 @@ jobs:
           aws eks update-kubeconfig --name eks-gateway --region us-east-1
           kubectl apply -f k8s/gateway/namespace.yaml
           cat > nginx.conf <<EOF
-events {}
-http {
-  upstream backend {
-    server ${BACKEND_LB}:8080;
-  }
-  server {
-    listen 80;
-    location / {
-      proxy_pass http://backend;
-    }
-  }
-}
-EOF
+          events {}
+          http {
+            upstream backend {
+              server ${BACKEND_LB}:8080;
+            }
+            server {
+              listen 80;
+              location / {
+                proxy_pass http://backend;
+              }
+            }
+          }
+          EOF
           kubectl -n gateway create configmap proxy-conf --from-file=nginx.conf --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f k8s/gateway/deployment.yaml
           kubectl apply -f k8s/gateway/service.yaml
