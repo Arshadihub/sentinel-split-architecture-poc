@@ -4,12 +4,17 @@ on:
   push:
     branches: [ main ]
 
-jobs:
-  infra:
-    runs-on: ubuntu-latest
+env:
+  TF_WORKING_DIR: terraform/envs/us-east-1
 
+jobs:
+  ci-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Terraform
@@ -17,25 +22,108 @@ jobs:
         with:
           terraform_version: 1.8.5
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - name: Configure AWS credentials (OIDC if available)
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+
+      - name: Configure AWS credentials (static fallback)
+        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' }}
+        uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
-      - name: Terraform init
-        working-directory: terraform/envs/us-east-1
+      - name: Terraform Init
         run: terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Terraform validate
-        working-directory: terraform/envs/us-east-1
+      - name: Install tflint
+        run: |
+          curl -sSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Run tflint
+        run: |
+          cd ${{ env.TF_WORKING_DIR }}
+          tflint --init || true
+          tflint
+
+      - name: Terraform Validate
         run: terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Terraform plan
-        working-directory: terraform/envs/us-east-1
+      - name: Terraform Plan
         run: terraform plan -out=tfplan
+        working-directory: ${{ env.TF_WORKING_DIR }}
 
-      - name: Terraform apply
-        working-directory: terraform/envs/us-east-1
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
         run: terraform apply -auto-approve tfplan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+      - name: Install kubeval
+        run: |
+          curl -sLO https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xzf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin/
+          rm kubeval-linux-amd64.tar.gz
+
+      - name: Deploy backend manifests to eks-backend
+        run: |
+          # get backend LB SG id from terraform outputs (if present)
+          BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
+          aws eks update-kubeconfig --name eks-backend --region us-east-1
+          # validate manifests
+          kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
+          kubectl apply --dry-run=client -f k8s/backend/namespace.yaml
+          kubectl apply --dry-run=client -f k8s/backend/deployment.yaml
+          kubectl apply --dry-run=client -f k8s/backend/service.yaml
+          kubectl apply --dry-run=client -f k8s/backend/networkpolicy.yaml
+          kubectl apply -f k8s/backend/namespace.yaml
+          kubectl apply -f k8s/backend/deployment.yaml
+          # replace placeholder in service manifest with actual SG id (if any)
+          if [ -n "$BACKEND_SG" ]; then
+            sed "s|__BACKEND_SG__|$BACKEND_SG|g" k8s/backend/service.yaml | kubectl apply -f -
+          else
+            kubectl apply -f k8s/backend/service.yaml
+          fi
+          kubectl apply -f k8s/backend/networkpolicy.yaml
+
+      - name: Wait for backend LoadBalancer
+        run: |
+          for i in {1..30}; do
+            HOST=$(kubectl -n sentinel get svc backend-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)
+            if [ -n "$HOST" ]; then echo "LB=$HOST" && break; fi
+            sleep 10
+          done
+          echo "BACKEND_LB=$HOST" >> $GITHUB_ENV
+
+      - name: Deploy gateway manifests to eks-gateway (patch config with backend LB)
+        run: |
+          aws eks update-kubeconfig --name eks-gateway --region us-east-1
+          kubectl apply -f k8s/gateway/namespace.yaml
+          cat > nginx.conf <<EOF
+events {}
+http {
+  upstream backend {
+    server ${BACKEND_LB}:8080;
+  }
+  server {
+    listen 80;
+    location / {
+      proxy_pass http://backend;
+    }
+  }
+}
+EOF
+          kubectl -n gateway create configmap proxy-conf --from-file=nginx.conf --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f k8s/gateway/deployment.yaml
+          kubectl apply -f k8s/gateway/service.yaml

@@ -3,8 +3,11 @@ kind: Service
 metadata:
   name: backend-svc
   namespace: sentinel
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-security-groups: "__BACKEND_SG__"
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: backend
   ports:

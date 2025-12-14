@@ -1,5 +1,5 @@
 module "vpc_peering" {
-  source = "../modules/peering"
+  source = "../../modules/peering"
 
   requester_vpc_id       = module.vpc_gateway.vpc_id
   accepter_vpc_id        = module.vpc_backend.vpc_id
