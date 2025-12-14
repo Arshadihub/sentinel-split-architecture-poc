@@ -10,7 +10,10 @@ This script runs two `terraform import` commands targeting the
 registry EKS module resources used in this repo.
 #>
 
-if ($env:GITHUB_WORKSPACE -and $env:GITHUB_WORKSPACE -ne "") {
+if ($env:TF_WORKING_DIR -and $env:TF_WORKING_DIR -ne "") {
+	Write-Host "TF_WORKING_DIR detected; changing to Terraform config dir: $env:TF_WORKING_DIR"
+	Set-Location -Path $env:TF_WORKING_DIR
+} elseif ($env:GITHUB_WORKSPACE -and $env:GITHUB_WORKSPACE -ne "") {
 	Write-Host "GITHUB_WORKSPACE detected; changing to repository root: $env:GITHUB_WORKSPACE"
 	Set-Location -Path $env:GITHUB_WORKSPACE
 } else {
