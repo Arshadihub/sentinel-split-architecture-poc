@@ -3,6 +3,7 @@ name: sentinel-poc
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   TF_WORKING_DIR: terraform/envs/us-east-1
