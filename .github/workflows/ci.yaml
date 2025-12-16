@@ -53,21 +53,62 @@ jobs:
             fi
           done
           
-          # Delete empty VPCs (not default VPC)
+          # More aggressive VPC cleanup - target old/unused VPCs
           echo "Deleting unused VPCs..."
-          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false]' --output json | jq -r '.[] | select(.Tags // [] | length == 0) | .VpcId' | while read -r vpc_id; do
+          
+          # First, list all non-default VPCs for visibility
+          echo "Current non-default VPCs:"
+          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false].[VpcId,Tags[?Key==`Name`].Value|[0],State]' --output table || true
+          
+          # Delete VPCs without active resources
+          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false].VpcId' --output text | tr '\t' '\n' | while read -r vpc_id; do
             if [ -n "$vpc_id" ]; then
-              echo "Attempting to delete unused VPC: $vpc_id"
-              # Delete subnets first
-              aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
-                [ -n "$subnet_id" ] && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
-              done
-              # Delete route tables (except main)
-              aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
-                [ -n "$rt_id" ] && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
-              done
-              # Delete VPC
-              aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null || echo "Could not delete VPC $vpc_id (may have dependencies)"
+              echo "Checking VPC: $vpc_id"
+              
+              # Check if VPC has any instances
+              INSTANCE_COUNT=$(aws ec2 describe-instances --filters "Name=vpc-id,Values=$vpc_id" "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped" --query 'length(Reservations[].Instances[])')
+              
+              if [ "$INSTANCE_COUNT" = "0" ]; then
+                echo "Attempting to clean VPC: $vpc_id (no active instances)"
+                
+                # Delete NAT gateways first
+                aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query 'NatGateways[].NatGatewayId' --output text | tr '\t' '\n' | while read -r nat_id; do
+                  [ -n "$nat_id" ] && echo "Deleting NAT Gateway: $nat_id" && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" 2>/dev/null || true
+                done
+                
+                # Wait briefly for NAT gateways to delete
+                sleep 5
+                
+                # Delete internet gateways
+                aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'InternetGateways[].InternetGatewayId' --output text | tr '\t' '\n' | while read -r igw_id; do
+                  if [ -n "$igw_id" ]; then
+                    echo "Detaching and deleting IGW: $igw_id"
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" 2>/dev/null || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" 2>/dev/null || true
+                  fi
+                done
+                
+                # Delete subnets
+                aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
+                  [ -n "$subnet_id" ] && echo "Deleting subnet: $subnet_id" && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
+                done
+                
+                # Delete route tables (except main)
+                aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
+                  [ -n "$rt_id" ] && echo "Deleting route table: $rt_id" && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
+                done
+                
+                # Delete security groups (except default)
+                aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read -r sg_id; do
+                  [ -n "$sg_id" ] && echo "Deleting security group: $sg_id" && aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
+                done
+                
+                # Finally delete VPC
+                echo "Deleting VPC: $vpc_id"
+                aws ec2 delete-vpc --vpc-id "$vpc_id" && echo "Successfully deleted VPC: $vpc_id" || echo "Could not delete VPC $vpc_id"
+              else
+                echo "Skipping VPC $vpc_id (has $INSTANCE_COUNT active instances)"
+              fi
             fi
           done
           
