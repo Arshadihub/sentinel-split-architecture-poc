@@ -13,7 +13,4 @@ module "eks_gateway" {
   vpc_id       = module.vpc_gateway.vpc_id
   subnet_ids   = module.vpc_gateway.private_subnet_ids
   env          = "gateway"
-
-  # Disable KMS encryption for PoC (avoids kms:TagResource requirement)
-  cluster_encryption_config = {}
 }
