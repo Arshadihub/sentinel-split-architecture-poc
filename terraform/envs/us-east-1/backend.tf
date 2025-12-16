@@ -17,6 +17,7 @@ module "eks_backend" {
 }
 
 # Security group for backend internal LoadBalancer allowing only gateway VPC CIDR
+# Use ignore_changes to avoid conflicts if already exists
 resource "aws_security_group" "backend_lb_sg" {
   name        = "backend-lb-sg"
   description = "Allow only gateway VPC CIDR to access backend LB"
@@ -39,6 +40,10 @@ resource "aws_security_group" "backend_lb_sg" {
 
   tags = {
     Name = "backend-lb-sg"
+  }
+
+  lifecycle {
+    ignore_changes = [name, description]
   }
 }
 
