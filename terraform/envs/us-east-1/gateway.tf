@@ -5,6 +5,7 @@ module "vpc_gateway" {
   cidr                  = "10.10.0.0/16"
   azs                   = ["us-east-1a", "us-east-1b"]
   single_nat_gateway    = true
+  use_existing_vpc_id   = "vpc-0bfde9598df7ce192"
 }
 
 module "eks_gateway" {

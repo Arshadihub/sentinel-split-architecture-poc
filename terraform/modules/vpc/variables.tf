@@ -18,3 +18,9 @@ variable "single_nat_gateway" {
   type        = bool
   default     = true
 }
+
+variable "use_existing_vpc_id" {
+  description = "If provided, use this existing VPC ID instead of creating a new VPC"
+  type        = string
+  default     = ""
+}

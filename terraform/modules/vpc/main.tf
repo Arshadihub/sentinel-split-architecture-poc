@@ -1,14 +1,24 @@
+data "aws_vpc" "existing" {
+  count = var.use_existing_vpc_id != "" ? 1 : 0
+  id    = var.use_existing_vpc_id
+}
+
 resource "aws_vpc" "this" {
+  count                = var.use_existing_vpc_id != "" ? 0 : 1
   cidr_block           = var.cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
   tags = { Name = var.name }
 }
 
+locals {
+  vpc_id = var.use_existing_vpc_id != "" ? data.aws_vpc.existing[0].id : aws_vpc.this[0].id
+}
+
 // create public subnets for NAT gateways
 resource "aws_subnet" "public" {
   count                   = length(var.azs)
-  vpc_id                  = aws_vpc.this.id
+  vpc_id                  = local.vpc_id
   cidr_block              = cidrsubnet(var.cidr, 8, count.index)
   availability_zone       = element(var.azs, count.index)
   map_public_ip_on_launch = true
@@ -18,7 +28,7 @@ resource "aws_subnet" "public" {
 // create private subnets in remaining CIDR space
 resource "aws_subnet" "private" {
   count                   = length(var.azs)
-  vpc_id                  = aws_vpc.this.id
+  vpc_id                  = local.vpc_id
   cidr_block              = cidrsubnet(var.cidr, 8, count.index + length(var.azs))
   availability_zone       = element(var.azs, count.index)
   map_public_ip_on_launch = false
@@ -26,12 +36,12 @@ resource "aws_subnet" "private" {
 }
 
 resource "aws_internet_gateway" "igw" {
-  vpc_id = aws_vpc.this.id
+  vpc_id = local.vpc_id
   tags = { Name = "${var.name}-igw" }
 }
 
 resource "aws_route_table" "public" {
-  vpc_id = aws_vpc.this.id
+  vpc_id = local.vpc_id
   tags = { Name = "${var.name}-public-rt" }
 }
 
@@ -63,7 +73,7 @@ resource "aws_nat_gateway" "nat" {
 // Private route tables (one per AZ) and associations to private subnets
 resource "aws_route_table" "private" {
   count  = length(var.azs)
-  vpc_id = aws_vpc.this.id
+  vpc_id = local.vpc_id
   tags = { Name = "${var.name}-private-rt-${count.index}" }
 }
 
@@ -82,7 +92,7 @@ resource "aws_route_table_association" "private_assoc" {
 
 // Outputs
 output "vpc_id" {
-  value = aws_vpc.this.id
+  value = local.vpc_id
 }
 
 output "cidr" {
