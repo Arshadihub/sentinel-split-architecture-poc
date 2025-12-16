@@ -1,4 +1,4 @@
-variable "cluster_name" {
+iable "cluster_name" {
   description = "Name of the EKS cluster"
   type        = string
 }
@@ -26,7 +26,7 @@ variable "create_kms_key" {
 }
 
 variable "cluster_encryption_config" {
-  description = "Cluster encryption config passed to the EKS module; set to [] or null to disable"
-  type        = any
-  default     = null
+  description = "Cluster encryption config passed to the EKS module; set to [] to disable"
+  type        = list(any)
+  default     = []
 }
