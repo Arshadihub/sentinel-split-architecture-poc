@@ -40,6 +40,39 @@ jobs:
       - name: Import CloudWatch Log Groups (before plan)
         run: pwsh ./scripts/import-loggroups.ps1
 
+      - name: Cleanup unused AWS resources (free quota)
+        run: |
+          echo "Cleaning up unused VPCs and EIPs to free quota..."
+          
+          # Release unattached EIPs
+          echo "Releasing unattached Elastic IPs..."
+          aws ec2 describe-addresses --query 'Addresses[?AssociationId==null].AllocationId' --output text | tr '\t' '\n' | while read -r allocation_id; do
+            if [ -n "$allocation_id" ] && [ "$allocation_id" != "None" ]; then
+              echo "Releasing EIP: $allocation_id"
+              aws ec2 release-address --allocation-id "$allocation_id" || echo "Failed to release $allocation_id"
+            fi
+          done
+          
+          # Delete empty VPCs (not default VPC)
+          echo "Deleting unused VPCs..."
+          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false]' --output json | jq -r '.[] | select(.Tags // [] | length == 0) | .VpcId' | while read -r vpc_id; do
+            if [ -n "$vpc_id" ]; then
+              echo "Attempting to delete unused VPC: $vpc_id"
+              # Delete subnets first
+              aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
+                [ -n "$subnet_id" ] && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
+              done
+              # Delete route tables (except main)
+              aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
+                [ -n "$rt_id" ] && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
+              done
+              # Delete VPC
+              aws ec2 delete-vpc --vpc-id "$vpc_id" 2>/dev/null || echo "Could not delete VPC $vpc_id (may have dependencies)"
+            fi
+          done
+          
+          echo "Cleanup complete"
+
       - name: Install tflint
         run: |
           curl -sSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
@@ -86,8 +119,8 @@ jobs:
           echo "backend_nodegroups=$BACKEND_NODEGROUPS" >> $GITHUB_OUTPUT
           echo "gateway_nodegroups=$GATEWAY_NODEGROUPS" >> $GITHUB_OUTPUT
           if [ "$BACKEND_NODEGROUPS" -eq "0" ] || [ "$GATEWAY_NODEGROUPS" -eq "0" ]; then
-            echo "⚠️ EKS clusters have no nodegroups yet"
-            echo "🔴 Skipping K8s deployment until IAM permissions and service quotas are increased"
+            echo "WARNING: EKS clusters have no nodegroups yet"
+            echo "Skipping K8s deployment until IAM permissions and service quotas are increased"
           fi
 
       - name: Deploy backend manifests to eks-backend
