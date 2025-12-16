@@ -49,14 +49,14 @@ resource "aws_route_table_association" "public_assoc" {
 
 // Allocate EIPs and create NAT Gateways in each AZ
 resource "aws_eip" "nat_eip" {
-  count = length(var.azs)
+  count = var.single_nat_gateway ? 1 : length(var.azs)
   vpc   = true
 }
 
 resource "aws_nat_gateway" "nat" {
-  count         = length(var.azs)
-  allocation_id = aws_eip.nat_eip[count.index].id
-  subnet_id     = aws_subnet.public[count.index].id
+  count         = var.single_nat_gateway ? 1 : length(var.azs)
+  allocation_id = aws_eip.nat_eip[min(count.index, length(aws_eip.nat_eip)-1)].id
+  subnet_id     = aws_subnet.public[min(count.index, length(aws_subnet.public)-1)].id
   tags = { Name = "${var.name}-nat-${count.index}" }
 }
 
@@ -71,7 +71,7 @@ resource "aws_route" "private_default" {
   count                   = length(var.azs)
   route_table_id          = aws_route_table.private[count.index].id
   destination_cidr_block  = "0.0.0.0/0"
-  nat_gateway_id          = aws_nat_gateway.nat[count.index].id
+  nat_gateway_id          = aws_nat_gateway.nat[var.single_nat_gateway ? 0 : count.index].id
 }
 
 resource "aws_route_table_association" "private_assoc" {

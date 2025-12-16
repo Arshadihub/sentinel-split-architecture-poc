@@ -1,9 +1,10 @@
 module "vpc_backend" {
   source = "../../modules/vpc"
 
-  name = "vpc-backend"
-  cidr = "10.20.0.0/16"
-  azs  = ["us-east-1a", "us-east-1b"]
+  name                  = "vpc-backend"
+  cidr                  = "10.20.0.0/16"
+  azs                   = ["us-east-1a", "us-east-1b"]
+  single_nat_gateway    = true
 }
 
 module "eks_backend" {
