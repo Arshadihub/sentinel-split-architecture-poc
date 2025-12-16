@@ -18,3 +18,15 @@ variable "env" {
   type        = string
   default     = ""
 }
+
+variable "create_kms_key" {
+  description = "Whether to create a KMS key for cluster encryption"
+  type        = bool
+  default     = false
+}
+
+variable "cluster_encryption_config" {
+  description = "Cluster encryption config passed to the EKS module; set to [] or null to disable"
+  type        = any
+  default     = null
+}

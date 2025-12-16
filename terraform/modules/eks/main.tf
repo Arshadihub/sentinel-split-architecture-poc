@@ -7,6 +7,10 @@ module "eks" {
   subnet_ids      = var.subnet_ids
   enable_irsa     = true
 
+  # Disable KMS key creation/encryption by default for the PoC
+  create_kms_key              = var.create_kms_key
+  cluster_encryption_config   = var.cluster_encryption_config
+
   eks_managed_node_groups = {
     default = {
       min_size       = 2
