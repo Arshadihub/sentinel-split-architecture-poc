@@ -13,6 +13,9 @@ module "eks_backend" {
   vpc_id       = module.vpc_backend.vpc_id
   subnet_ids   = module.vpc_backend.private_subnet_ids
   env          = "backend"
+
+  # Disable KMS encryption for PoC (avoids kms:TagResource requirement)
+  cluster_encryption_config = {}
 }
 
 # Security group for backend internal LoadBalancer allowing only gateway VPC CIDR
