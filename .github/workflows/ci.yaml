@@ -3,7 +3,6 @@ name: sentinel-poc
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:
 
 env:
   TF_WORKING_DIR: terraform/envs/us-east-1
@@ -79,7 +78,20 @@ jobs:
           sudo mv kubeval /usr/local/bin/
           rm kubeval-linux-amd64.tar.gz
 
+      - name: Check EKS nodegroups before K8s deployment
+        id: check-nodegroups
+        run: |
+          BACKEND_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-backend --region us-east-1 --query 'length(nodegroups)' --output text)
+          GATEWAY_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-gateway --region us-east-1 --query 'length(nodegroups)' --output text)
+          echo "backend_nodegroups=$BACKEND_NODEGROUPS" >> $GITHUB_OUTPUT
+          echo "gateway_nodegroups=$GATEWAY_NODEGROUPS" >> $GITHUB_OUTPUT
+          if [ "$BACKEND_NODEGROUPS" -eq "0" ] || [ "$GATEWAY_NODEGROUPS" -eq "0" ]; then
+            echo "⚠️ EKS clusters have no nodegroups yet"
+            echo "🔴 Skipping K8s deployment until IAM permissions and service quotas are increased"
+          fi
+
       - name: Deploy backend manifests to eks-backend
+        if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
           BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
           aws eks update-kubeconfig --name eks-backend --region us-east-1
@@ -98,6 +110,7 @@ jobs:
           kubectl apply -f k8s/backend/networkpolicy.yaml
 
       - name: Wait for backend LoadBalancer
+        if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
           for i in {1..30}; do
             HOST=$(kubectl -n sentinel get svc backend-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)
@@ -107,6 +120,7 @@ jobs:
           echo "BACKEND_LB=$HOST" >> $GITHUB_ENV
 
       - name: Deploy gateway manifests to eks-gateway (patch config with backend LB)
+        if: steps.check-nodegroups.outputs.gateway_nodegroups != '0' && steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
           aws eks update-kubeconfig --name eks-gateway --region us-east-1
           kubectl apply -f k8s/gateway/namespace.yaml
