@@ -134,7 +134,17 @@ jobs:
 
       - name: Terraform Apply
         if: github.ref == 'refs/heads/main'
-        run: terraform apply -auto-approve tfplan
+        run: |
+          terraform apply -auto-approve tfplan
+          
+          # Force update EKS endpoint access for existing clusters
+          echo "Updating EKS cluster endpoint access..."
+          aws eks update-cluster-config --name eks-backend --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          aws eks update-cluster-config --name eks-gateway --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          
+          # Wait for endpoint updates
+          echo "Waiting for endpoint updates to complete..."
+          sleep 300  # 5 minutes wait
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       # Import moved earlier to avoid create conflicts
