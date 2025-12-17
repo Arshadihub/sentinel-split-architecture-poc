@@ -96,8 +96,8 @@ resource "aws_route_table_association" "public_assoc" {
 
 // Allocate EIPs and create NAT Gateways in each AZ (only for new VPCs)
 resource "aws_eip" "nat_eip" {
-  count = var.use_existing_vpc_id != "" ? 0 : (var.single_nat_gateway ? 1 : length(var.azs))
-  vpc   = true
+  count  = var.use_existing_vpc_id != "" ? 0 : (var.single_nat_gateway ? 1 : length(var.azs))
+  domain = "vpc"
 }
 
 resource "aws_nat_gateway" "nat" {

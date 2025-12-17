@@ -14,9 +14,23 @@ data "aws_route_table" "backend_private" {
   route_table_id = var.backend_private_rtb_id
 }
 
+# Check if routes already exist by looking for any routes with our target destinations
 locals {
-  gateway_route_exists = contains([for route in data.aws_route_table.gateway_private.routes : route.destination_cidr_block], var.backend_cidr)
-  backend_route_exists = contains([for route in data.aws_route_table.backend_private.routes : route.destination_cidr_block], var.gateway_cidr)
+  # Safe check for existing routes - look for any route with our destination CIDR
+  existing_gateway_routes = try(data.aws_route_table.gateway_private.routes, [])
+  existing_backend_routes = try(data.aws_route_table.backend_private.routes, [])
+  
+  gateway_route_exists = anytrue([
+    for route in local.existing_gateway_routes : 
+    try(route.cidr_block == var.backend_cidr, false) ||
+    try(route.destination_cidr_block == var.backend_cidr, false)
+  ])
+  
+  backend_route_exists = anytrue([
+    for route in local.existing_backend_routes : 
+    try(route.cidr_block == var.gateway_cidr, false) ||
+    try(route.destination_cidr_block == var.gateway_cidr, false)
+  ])
 }
 
 resource "aws_route" "gateway_to_backend" {
