@@ -52,6 +52,35 @@ jobs:
               echo "Log group $log_group does not exist, skipping"
             fi
           done
+          
+      - name: Force cleanup of failed EKS resources
+        run: |
+          echo "Aggressively cleaning up any remaining EKS resources..."
+          
+          # Delete any existing EKS clusters with our names
+          for cluster in "eks-backend-v2" "eks-gateway-v2"; do
+            if aws eks describe-cluster --name "$cluster" >/dev/null 2>&1; then
+              echo "Found existing cluster $cluster, deleting..."
+              
+              # Delete node groups first
+              aws eks list-nodegroups --cluster-name "$cluster" --query 'nodegroups[]' --output text | while read -r nodegroup; do
+                if [ -n "$nodegroup" ]; then
+                  echo "Deleting nodegroup $nodegroup from $cluster"
+                  aws eks delete-nodegroup --cluster-name "$cluster" --nodegroup-name "$nodegroup" || true
+                fi
+              done
+              
+              # Wait a bit for nodegroups to start deleting
+              echo "Waiting 60 seconds for nodegroups to delete..."
+              sleep 60
+              
+              # Delete the cluster
+              echo "Deleting cluster $cluster"
+              aws eks delete-cluster --name "$cluster" || true
+            fi
+          done
+          
+          echo "EKS cleanup completed"
 
       - name: Import CloudWatch Log Groups (before plan)
         run: pwsh ./scripts/import-loggroups.ps1
