@@ -3,13 +3,88 @@ name: sentinel-poc
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 env:
   TF_WORKING_DIR: terraform/envs/us-east-1
 
 jobs:
+  cleanup-vpcs:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      
+      - name: Aggressive VPC Cleanup
+        run: |
+          echo "=== Starting Aggressive VPC Cleanup ==="
+          VPCS=("vpc-0bfde9598df7ce192" "vpc-00d6478acab308f77" "vpc-00d0f3047c3b842c3" "vpc-06f41f6a58ed514d8" "vpc-0fb2a9eac411d6336" "vpc-0fa0a67e28bbc481a")
+          
+          for VPC in "${VPCS[@]}"; do
+            echo "Processing VPC: $VPC"
+            
+            # Check if VPC exists
+            if ! aws ec2 describe-vpcs --vpc-ids $VPC >/dev/null 2>&1; then
+              echo "✅ VPC $VPC already deleted"
+              continue
+            fi
+            
+            echo "Cleaning dependencies for VPC: $VPC"
+            
+            # Delete NAT Gateways
+            for NATGW in $(aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC" --query 'NatGateways[*].NatGatewayId' --output text); do
+              echo "  Deleting NAT Gateway: $NATGW"
+              aws ec2 delete-nat-gateway --nat-gateway-id $NATGW || true
+            done
+            
+            # Delete Route Tables (except default)
+            for RT in $(aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC" --query 'RouteTables[?Associations[0].Main != `true`].RouteTableId' --output text); do
+              echo "  Deleting Route Table: $RT"
+              aws ec2 delete-route-table --route-table-id $RT || true
+            done
+            
+            # Delete Security Groups (except default)
+            for SG in $(aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC" --query 'SecurityGroups[?GroupName != `default`].GroupId' --output text); do
+              echo "  Deleting Security Group: $SG"
+              aws ec2 delete-security-group --group-id $SG || true
+            done
+            
+            # Delete Subnets
+            for SUBNET in $(aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC" --query 'Subnets[*].SubnetId' --output text); do
+              echo "  Deleting Subnet: $SUBNET"
+              aws ec2 delete-subnet --subnet-id $SUBNET || true
+            done
+            
+            # Release Elastic IPs
+            for EIP in $(aws ec2 describe-addresses --filters "Name=domain,Values=vpc" --query 'Addresses[*].AllocationId' --output text); do
+              echo "  Releasing EIP: $EIP"
+              aws ec2 release-address --allocation-id $EIP || true
+            done
+            
+            # Wait a bit
+            sleep 10
+            
+            # Finally delete the VPC
+            echo "  Deleting VPC: $VPC"
+            aws ec2 delete-vpc --vpc-id $VPC || true
+          done
+          
+          echo "=== VPC Cleanup Complete ==="
+
   ci-deploy:
     runs-on: ubuntu-latest
+    needs: cleanup-vpcs
     permissions:
       id-token: write
       contents: read
