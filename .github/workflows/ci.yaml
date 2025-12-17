@@ -186,16 +186,24 @@ jobs:
           sudo mv /tmp/eksctl /usr/local/bin
 
       - name: Configure EKS cluster access
+        if: steps.check-nodegroups.outputs.backend_nodegroups != '0' && steps.check-nodegroups.outputs.gateway_nodegroups != '0'
         run: |
+          # Verify eksctl installation
+          eksctl version
+          
           # Configure aws-auth for both clusters
           echo "Configuring access for eks-backend..."
-          eksctl create iamidentitymapping --cluster eks-backend --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions || true
+          eksctl create iamidentitymapping --cluster eks-backend --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions
           
-          echo "Configuring access for eks-gateway..."
-          eksctl create iamidentitymapping --cluster eks-gateway --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions || true
+          echo "Configuring access for eks-gateway..."  
+          eksctl create iamidentitymapping --cluster eks-gateway --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions
+          
+          echo "Verifying aws-auth configuration..."
+          kubectl --kubeconfig=/dev/null get configmap aws-auth -n kube-system --context="arn:aws:eks:us-east-1:721500739616:cluster/eks-backend" || true
+          kubectl --kubeconfig=/dev/null get configmap aws-auth -n kube-system --context="arn:aws:eks:us-east-1:721500739616:cluster/eks-gateway" || true
           
           echo "Waiting for aws-auth configuration to propagate..."
-          sleep 30
+          sleep 60
 
       - name: Deploy backend manifests to eks-backend
         if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
