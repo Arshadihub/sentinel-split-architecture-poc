@@ -142,9 +142,15 @@ jobs:
           aws eks update-cluster-config --name eks-backend --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
           aws eks update-cluster-config --name eks-gateway --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
           
-          # Wait for endpoint updates
+          # Wait for endpoint updates and verify AWS access
           echo "Waiting for endpoint updates to complete..."
           sleep 300  # 5 minutes wait
+          
+          # Verify AWS credentials and access
+          echo "Verifying AWS access..."
+          aws sts get-caller-identity
+          aws eks describe-cluster --name eks-backend --query 'cluster.status'
+          aws eks describe-cluster --name eks-gateway --query 'cluster.status'
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       # Import moved earlier to avoid create conflicts
@@ -178,7 +184,16 @@ jobs:
         if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
           BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
-          aws eks update-kubeconfig --name eks-backend --region us-east-1
+          
+          # Configure kubectl with proper AWS credentials and region
+          export AWS_DEFAULT_REGION=us-east-1
+          aws sts get-caller-identity
+          aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
+          
+          # Verify connectivity
+          kubectl cluster-info
+          kubectl get nodes
+          
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
           kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
           kubectl apply --dry-run=client --validate=false -f k8s/backend/deployment.yaml
@@ -206,7 +221,14 @@ jobs:
       - name: Deploy gateway manifests to eks-gateway (patch config with backend LB)
         if: steps.check-nodegroups.outputs.gateway_nodegroups != '0' && steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
-          aws eks update-kubeconfig --name eks-gateway --region us-east-1
+          # Configure kubectl with proper AWS credentials  
+          export AWS_DEFAULT_REGION=us-east-1
+          aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
+          
+          # Verify connectivity
+          kubectl cluster-info
+          kubectl get nodes
+          
           kubectl apply --validate=false -f k8s/gateway/namespace.yaml
           cat > nginx.conf <<EOF
           events {}
