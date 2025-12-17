@@ -13,7 +13,7 @@ module "eks_backend" {
   source       = "../../modules/eks"
   cluster_name = "eks-backend-v2"
   vpc_id       = module.vpc_backend.vpc_id
-  subnet_ids   = module.vpc_backend.private_subnet_ids
+  subnet_ids   = module.vpc_backend.public_subnet_ids
   env          = "backend"
 }
 

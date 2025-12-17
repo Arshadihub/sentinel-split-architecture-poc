@@ -13,7 +13,7 @@ module "eks_gateway" {
   source       = "../../modules/eks"
   cluster_name = "eks-gateway-v2"
   vpc_id       = module.vpc_gateway.vpc_id
-  subnet_ids   = module.vpc_gateway.private_subnet_ids
+  subnet_ids   = module.vpc_gateway.public_subnet_ids
   env          = "gateway"
 }
 
