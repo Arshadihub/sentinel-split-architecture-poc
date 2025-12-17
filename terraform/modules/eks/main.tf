@@ -16,6 +16,9 @@ module "eks" {
   create_kms_key              = var.create_kms_key
   cluster_encryption_config   = var.cluster_encryption_config
 
+  # Enable cluster creator admin permissions
+  enable_cluster_creator_admin_permissions = true
+
   eks_managed_node_groups = {
     default = {
       min_size       = 2

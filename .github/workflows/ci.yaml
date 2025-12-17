@@ -194,53 +194,11 @@ jobs:
           export AWS_DEFAULT_REGION=us-east-1
           aws sts get-caller-identity
           
-          # Force cluster access using AWS CLI to add IAM user directly
-          echo "Configuring cluster access using AWS CLI..."
+          # Update kubeconfig using standard AWS CLI
+          aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
           
-          # Get cluster endpoint and certificate
-          CLUSTER_ENDPOINT=$(aws eks describe-cluster --name eks-backend --query 'cluster.endpoint' --output text)
-          CLUSTER_CA=$(aws eks describe-cluster --name eks-backend --query 'cluster.certificateAuthority.data' --output text)
-          
-          # Create kubeconfig manually with token authentication
-          mkdir -p ~/.kube
-          cat > ~/.kube/config <<EOF
-          apiVersion: v1
-          clusters:
-          - cluster:
-              certificate-authority-data: $CLUSTER_CA
-              server: $CLUSTER_ENDPOINT
-            name: eks-backend
-          contexts:
-          - context:
-              cluster: eks-backend
-              user: aws-iam-authenticator
-            name: eks-backend
-          current-context: eks-backend
-          kind: Config
-          users:
-          - name: aws-iam-authenticator
-            user:
-              exec:
-                apiVersion: client.authentication.k8s.io/v1beta1
-                command: aws
-                args:
-                  - eks
-                  - get-token
-                  - --cluster-name
-                  - eks-backend
-                  - --region
-                  - us-east-1
-          EOF
-          
-          # Test the connection
-          kubectl cluster-info || echo "Direct kubectl failed, trying with AWS token..."
-          
-          # Get a token manually and try kubectl with token
-          AWS_TOKEN=$(aws eks get-token --cluster-name eks-backend --region us-east-1 --output text --query 'status.token')
-          kubectl --token="$AWS_TOKEN" --server="$CLUSTER_ENDPOINT" --certificate-authority-data="$CLUSTER_CA" get ns || echo "Token auth also failed"
-          
-          # Proceed with deployment anyway
-          echo "Proceeding with deployment using standard kubectl..."
+          # Deploy backend applications
+          echo "Deploying backend applications..."
           
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
           kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
