@@ -28,25 +28,33 @@ module "eks_backend" {
   env          = "backend"
 }
 
-# Create aws-auth ConfigMap for backend cluster
-resource "kubernetes_config_map_v1" "backend_aws_auth" {
-  provider = kubernetes.backend
+# Create aws-auth ConfigMap for backend cluster using kubectl
+resource "null_resource" "backend_aws_auth" {
+  provisioner "local-exec" {
+    command = <<-EOF
+      # Wait for cluster to be ready
+      sleep 30
+      
+      # Update kubeconfig
+      aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
+      
+      # Create aws-auth ConfigMap
+      cat <<YAML | kubectl apply -f -
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aws-auth
+  namespace: kube-system
+data:
+  mapUsers: |
+    - userarn: arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com
+      username: github-actions
+      groups:
+        - system:masters
+YAML
+    EOF
+  }
   
-  metadata {
-    name      = "aws-auth"
-    namespace = "kube-system"
-  }
-
-  data = {
-    mapUsers = yamlencode([
-      {
-        userarn  = "arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com"
-        username = "github-actions"
-        groups   = ["system:masters"]
-      }
-    ])
-  }
-
   depends_on = [data.aws_eks_cluster.existing_backend]
 }
 
