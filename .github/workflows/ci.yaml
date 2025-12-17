@@ -161,11 +161,6 @@ jobs:
           chmod +x kubectl
           sudo mv kubectl /usr/local/bin/
 
-      - name: Install eksctl
-        run: |
-          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
-          sudo mv /tmp/eksctl /usr/local/bin/
-
       - name: Install kubeval
         run: |
           curl -sLO https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
@@ -193,24 +188,11 @@ jobs:
           # Configure kubectl with proper AWS credentials and region
           export AWS_DEFAULT_REGION=us-east-1
           aws sts get-caller-identity
-          
-          # Get the IAM user ARN for auth configuration
-          IAM_USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
-          echo "IAM User ARN: $IAM_USER_ARN"
-          
-          # Update kubeconfig and add IAM user to EKS auth
           aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
           
-          # Add current IAM user to aws-auth ConfigMap
-          eksctl create iamidentitymapping \
-            --cluster eks-backend \
-            --region us-east-1 \
-            --arn "$IAM_USER_ARN" \
-            --group system:masters \
-            --username github-actions || true
-          
-          # Wait a moment for auth propagation
-          sleep 30
+          # Wait for aws-auth configuration to propagate
+          echo "Waiting for aws-auth configuration..."
+          sleep 60
           
           # Verify connectivity
           kubectl cluster-info
@@ -245,23 +227,11 @@ jobs:
         run: |
           # Configure kubectl with proper AWS credentials  
           export AWS_DEFAULT_REGION=us-east-1
-          
-          # Get the IAM user ARN for auth configuration
-          IAM_USER_ARN=$(aws sts get-caller-identity --query Arn --output text)
-          echo "IAM User ARN: $IAM_USER_ARN"
-          
           aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
           
-          # Add current IAM user to aws-auth ConfigMap
-          eksctl create iamidentitymapping \
-            --cluster eks-gateway \
-            --region us-east-1 \
-            --arn "$IAM_USER_ARN" \
-            --group system:masters \
-            --username github-actions || true
-          
-          # Wait a moment for auth propagation
-          sleep 30
+          # Wait for aws-auth configuration to propagate
+          echo "Waiting for aws-auth configuration..."
+          sleep 60
           
           # Verify connectivity
           kubectl cluster-info
