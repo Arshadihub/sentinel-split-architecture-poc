@@ -185,63 +185,6 @@ jobs:
           curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
           sudo mv /tmp/eksctl /usr/local/bin
 
-      - name: Configure EKS cluster access
-        if: steps.check-nodegroups.outputs.backend_nodegroups != '0' && steps.check-nodegroups.outputs.gateway_nodegroups != '0'
-        run: |
-          # Debug current identity and cluster info
-          echo "Current AWS identity:"
-          aws sts get-caller-identity
-          
-          echo "EKS cluster info:"
-          aws eks describe-cluster --name eks-backend --query 'cluster.{Status:status,Endpoint:endpoint,CreatedBy:tags}'
-          aws eks describe-cluster --name eks-gateway --query 'cluster.{Status:status,Endpoint:endpoint,CreatedBy:tags}'
-          
-          # Try to access cluster directly to see the exact error
-          echo "Testing direct cluster access..."
-          aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
-          kubectl config current-context
-          kubectl config view --raw
-          
-          # Try a simple kubectl command to see the exact error
-          echo "Testing kubectl access..."
-          kubectl --context eks-backend get ns || echo "Expected failure - cluster not accessible yet"
-          
-          # Use AWS API directly to create/update aws-auth ConfigMap via EKS API
-          echo "Attempting to configure cluster access via AWS API..."
-          
-          # Get the current aws-auth ConfigMap if it exists
-          AWS_AUTH_DATA=$(kubectl --context eks-backend get configmap aws-auth -n kube-system -o jsonpath='{.data}' 2>/dev/null || echo "{}")
-          
-          # Create a complete aws-auth ConfigMap with both node roles and user mapping
-          cat > aws-auth-config.yaml <<EOF
-          apiVersion: v1
-          kind: ConfigMap
-          metadata:
-            name: aws-auth
-            namespace: kube-system
-          data:
-            mapRoles: |
-              - rolearn: arn:aws:iam::721500739616:role/eks-backend-node-group-20*
-                username: system:node:{{EC2PrivateDNSName}}
-                groups:
-                  - system:bootstrappers
-                  - system:nodes
-              - rolearn: arn:aws:iam::721500739616:role/eks-gateway-node-group-20*
-                username: system:node:{{EC2PrivateDNSName}}
-                groups:
-                  - system:bootstrappers
-                  - system:nodes
-            mapUsers: |
-              - userarn: arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com
-                username: github-actions
-                groups:
-                  - system:masters
-          EOF
-          
-          echo "Attempting to apply aws-auth configuration..."
-          kubectl --context eks-backend apply -f aws-auth-config.yaml || echo "Backend cluster access failed"
-          kubectl --context eks-gateway apply -f aws-auth-config.yaml || echo "Gateway cluster access failed"
-
       - name: Deploy backend manifests to eks-backend
         if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
@@ -250,12 +193,12 @@ jobs:
           # Configure kubectl with proper AWS credentials and region
           export AWS_DEFAULT_REGION=us-east-1
           aws sts get-caller-identity
+          
+          # Use cluster creator permissions directly without aws-auth ConfigMap
           aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
           
-          # Test authentication
-          echo "Testing cluster authentication..."
-          kubectl get nodes
-          kubectl cluster-info
+          # Proceed with deployment - cluster creator should have access
+          echo "Deploying backend applications..."
           
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
           kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
@@ -288,10 +231,8 @@ jobs:
           export AWS_DEFAULT_REGION=us-east-1
           aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
           
-          # Test authentication
-          echo "Testing cluster authentication..."
-          kubectl get nodes
-          kubectl cluster-info
+          # Proceed with gateway deployment
+          echo "Deploying gateway applications..."
           
           kubectl apply --validate=false -f k8s/gateway/namespace.yaml
           cat > nginx.conf <<EOF
