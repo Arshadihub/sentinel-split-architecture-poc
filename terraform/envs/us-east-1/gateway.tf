@@ -39,7 +39,7 @@ resource "null_resource" "gateway_aws_auth" {
       aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
       
       # Create aws-auth ConfigMap
-      cat <<YAML | kubectl apply -f -
+      cat <<YAML | kubectl apply --validate=false -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:

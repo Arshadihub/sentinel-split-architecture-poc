@@ -39,7 +39,7 @@ resource "null_resource" "backend_aws_auth" {
       aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
       
       # Create aws-auth ConfigMap
-      cat <<YAML | kubectl apply -f -
+      cat <<YAML | kubectl apply --validate=false -f -
 apiVersion: v1
 kind: ConfigMap
 metadata:
