@@ -2,7 +2,7 @@ module "vpc_backend" {
   source = "../../modules/vpc"
 
   name                  = "vpc-backend"
-  cidr                  = "10.20.0.0/16"
+  cidr                  = "172.17.0.0/16"
   azs                   = ["us-east-1a", "us-east-1b"]
   single_nat_gateway    = true
   # Create new VPC instead of using existing

@@ -2,7 +2,7 @@ module "vpc_gateway" {
   source = "../../modules/vpc"
 
   name                  = "vpc-gateway"
-  cidr                  = "10.10.0.0/16"
+  cidr                  = "172.16.0.0/16"
   azs                   = ["us-east-1a", "us-east-1b"]
   single_nat_gateway    = true
   # Create new VPC instead of using existing
