@@ -12,19 +12,24 @@ module "eks" {
   cluster_endpoint_public_access  = true
   cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
 
-  # Configure aws-auth ConfigMap to allow GitHub Actions IAM user
-  manage_aws_auth_configmap = true
-  aws_auth_users = [
-    {
-      userarn  = "arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com"
-      username = "github-actions"
-      groups   = ["system:masters"]
-    }
-  ]
-
   # Disable KMS key creation/encryption by default for the PoC
   create_kms_key              = var.create_kms_key
   cluster_encryption_config   = var.cluster_encryption_config
+
+  # EKS Access Entry for GitHub Actions user
+  access_entries = {
+    github_actions = {
+      principal_arn = "arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com"
+      policy_associations = {
+        admin = {
+          policy_arn = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = {
+            type = "cluster"
+          }
+        }
+      }
+    }
+  }
 
   eks_managed_node_groups = {
     default = {
