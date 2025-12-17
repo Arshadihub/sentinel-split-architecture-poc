@@ -180,6 +180,23 @@ jobs:
             echo "Skipping K8s deployment until IAM permissions and service quotas are increased"
           fi
 
+      - name: Install eksctl
+        run: |
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+
+      - name: Configure EKS cluster access
+        run: |
+          # Configure aws-auth for both clusters
+          echo "Configuring access for eks-backend..."
+          eksctl create iamidentitymapping --cluster eks-backend --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions || true
+          
+          echo "Configuring access for eks-gateway..."
+          eksctl create iamidentitymapping --cluster eks-gateway --region us-east-1 --arn arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com --group system:masters --username github-actions || true
+          
+          echo "Waiting for aws-auth configuration to propagate..."
+          sleep 30
+
       - name: Deploy backend manifests to eks-backend
         if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
@@ -190,13 +207,10 @@ jobs:
           aws sts get-caller-identity
           aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
           
-          # Wait for aws-auth configuration to propagate
-          echo "Waiting for aws-auth configuration..."
-          sleep 60
-          
-          # Verify connectivity
-          kubectl cluster-info
+          # Test authentication
+          echo "Testing cluster authentication..."
           kubectl get nodes
+          kubectl cluster-info
           
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
           kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
@@ -229,13 +243,10 @@ jobs:
           export AWS_DEFAULT_REGION=us-east-1
           aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
           
-          # Wait for aws-auth configuration to propagate
-          echo "Waiting for aws-auth configuration..."
-          sleep 60
-          
-          # Verify connectivity
-          kubectl cluster-info
+          # Test authentication
+          echo "Testing cluster authentication..."
           kubectl get nodes
+          kubectl cluster-info
           
           kubectl apply --validate=false -f k8s/gateway/namespace.yaml
           cat > nginx.conf <<EOF
