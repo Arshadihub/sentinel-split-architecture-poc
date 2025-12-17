@@ -1,13 +1,3 @@
-# Check if EKS cluster already exists
-data "aws_eks_cluster" "existing_gateway" {
-  count = 1
-  name  = "eks-gateway"
-}
-
-locals {
-  gateway_cluster_exists = can(data.aws_eks_cluster.existing_gateway[0].status)
-}
-
 module "vpc_gateway" {
   source = "../../modules/vpc"
 

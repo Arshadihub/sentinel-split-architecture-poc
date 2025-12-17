@@ -1,13 +1,3 @@
-# Check if EKS cluster already exists
-data "aws_eks_cluster" "existing_backend" {
-  count = 1
-  name  = "eks-backend"
-}
-
-locals {
-  backend_cluster_exists = can(data.aws_eks_cluster.existing_backend[0].status)
-}
-
 module "vpc_backend" {
   source = "../../modules/vpc"
 
