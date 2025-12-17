@@ -98,6 +98,101 @@ jobs:
           
           echo "EKS cleanup completed"
 
+      - name: Force VPC cleanup to free quota
+        run: |
+          echo "Aggressively cleaning VPCs to free quota..."
+          
+          # List all VPCs to see what we're dealing with
+          echo "Current VPCs:"
+          aws ec2 describe-vpcs --output table || true
+          
+          # Get current VPC count
+          VPC_COUNT=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
+          echo "Current VPC count: $VPC_COUNT"
+          
+          # If we're close to limit, be aggressive
+          if [ "$VPC_COUNT" -ge 4 ]; then
+            echo "VPC count is high, forcing aggressive cleanup..."
+            
+            # Target old vpc-gateway and vpc-backend VPCs specifically
+            for vpc_name in "vpc-gateway" "vpc-backend"; do
+              VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$vpc_name" --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
+              if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+                echo "Force deleting VPC $vpc_name ($VPC_ID)..."
+                
+                # Force terminate any instances in the VPC
+                aws ec2 describe-instances --filters "Name=vpc-id,Values=$VPC_ID" --query 'Reservations[].Instances[].InstanceId' --output text | tr '\t' '\n' | while read -r instance_id; do
+                  if [ -n "$instance_id" ]; then
+                    echo "Force terminating instance: $instance_id"
+                    aws ec2 terminate-instances --instance-ids "$instance_id" || true
+                  fi
+                done
+                
+                # Wait briefly for terminations
+                sleep 10
+                
+                # Delete load balancers
+                aws elbv2 describe-load-balancers --query 'LoadBalancers[?VpcId==`'$VPC_ID'`].LoadBalancerArn' --output text | tr '\t' '\n' | while read -r lb_arn; do
+                  [ -n "$lb_arn" ] && echo "Deleting LB: $lb_arn" && aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" || true
+                done
+                
+                # Delete NAT gateways
+                aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" --query 'NatGateways[].NatGatewayId' --output text | tr '\t' '\n' | while read -r nat_id; do
+                  [ -n "$nat_id" ] && echo "Deleting NAT: $nat_id" && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" || true
+                done
+                
+                # Wait for NAT gateways to delete
+                echo "Waiting for NAT gateways to delete..."
+                sleep 30
+                
+                # Delete network interfaces
+                aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | while read -r eni_id; do
+                  [ -n "$eni_id" ] && echo "Deleting ENI: $eni_id" && aws ec2 delete-network-interface --network-interface-id "$eni_id" 2>/dev/null || true
+                done
+                
+                # Delete VPC peering connections
+                aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" "Name=accepter-vpc-info.vpc-id,Values=$VPC_ID" --query 'VpcPeeringConnections[].VpcPeeringConnectionId' --output text | tr '\t' '\n' | while read -r pcx_id; do
+                  [ -n "$pcx_id" ] && echo "Deleting peering: $pcx_id" && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" || true
+                done
+                
+                # Delete endpoints
+                aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query 'VpcEndpoints[].VpcEndpointId' --output text | tr '\t' '\n' | while read -r vpce_id; do
+                  [ -n "$vpce_id" ] && echo "Deleting endpoint: $vpce_id" && aws ec2 delete-vpc-endpoint --vpc-endpoint-id "$vpce_id" || true
+                done
+                
+                # Delete internet gateways
+                aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[].InternetGatewayId' --output text | tr '\t' '\n' | while read -r igw_id; do
+                  if [ -n "$igw_id" ]; then
+                    echo "Detaching and deleting IGW: $igw_id"
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$VPC_ID" || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" || true
+                  fi
+                done
+                
+                # Delete subnets
+                aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
+                  [ -n "$subnet_id" ] && echo "Deleting subnet: $subnet_id" && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
+                done
+                
+                # Delete route tables (except main)
+                aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
+                  [ -n "$rt_id" ] && echo "Deleting route table: $rt_id" && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
+                done
+                
+                # Delete security groups (except default)
+                aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read -r sg_id; do
+                  [ -n "$sg_id" ] && echo "Deleting security group: $sg_id" && aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
+                done
+                
+                # Finally delete VPC
+                echo "Attempting to delete VPC: $VPC_ID"
+                aws ec2 delete-vpc --vpc-id "$VPC_ID" && echo "Successfully deleted VPC: $VPC_ID" || echo "Could not delete VPC $VPC_ID (will try again later)"
+              fi
+            done
+          fi
+          
+          echo "Forced VPC cleanup complete"
+
       - name: Import CloudWatch Log Groups (before plan)
         run: pwsh ./scripts/import-loggroups.ps1
 
