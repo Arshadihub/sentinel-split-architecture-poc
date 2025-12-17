@@ -139,8 +139,8 @@ jobs:
           
           # Force update EKS endpoint access for existing clusters
           echo "Updating EKS cluster endpoint access..."
-          aws eks update-cluster-config --name eks-backend --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
-          aws eks update-cluster-config --name eks-gateway --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          aws eks update-cluster-config --name eks-backend-v2 --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          aws eks update-cluster-config --name eks-gateway-v2 --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
           
           # Wait for endpoint updates and verify AWS access
           echo "Waiting for endpoint updates to complete..."
@@ -149,8 +149,8 @@ jobs:
           # Verify AWS credentials and access
           echo "Verifying AWS access..."
           aws sts get-caller-identity
-          aws eks describe-cluster --name eks-backend --query 'cluster.status'
-          aws eks describe-cluster --name eks-gateway --query 'cluster.status'
+          aws eks describe-cluster --name eks-backend-v2 --query 'cluster.status'
+          aws eks describe-cluster --name eks-gateway-v2 --query 'cluster.status'
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       # Import moved earlier to avoid create conflicts
@@ -171,8 +171,8 @@ jobs:
       - name: Check EKS nodegroups before K8s deployment
         id: check-nodegroups
         run: |
-          BACKEND_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-backend --region us-east-1 --query 'length(nodegroups)' --output text)
-          GATEWAY_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-gateway --region us-east-1 --query 'length(nodegroups)' --output text)
+          BACKEND_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-backend-v2 --region us-east-1 --query 'length(nodegroups)' --output text)
+          GATEWAY_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-gateway-v2 --region us-east-1 --query 'length(nodegroups)' --output text)
           echo "backend_nodegroups=$BACKEND_NODEGROUPS" >> $GITHUB_OUTPUT
           echo "gateway_nodegroups=$GATEWAY_NODEGROUPS" >> $GITHUB_OUTPUT
           if [ "$BACKEND_NODEGROUPS" -eq "0" ] || [ "$GATEWAY_NODEGROUPS" -eq "0" ]; then
@@ -195,7 +195,7 @@ jobs:
           aws sts get-caller-identity
           
           # Update kubeconfig using standard AWS CLI
-          aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
+          aws eks update-kubeconfig --name eks-backend-v2 --region us-east-1 --alias eks-backend-v2
           
           # Deploy backend applications
           echo "Deploying backend applications..."
@@ -229,7 +229,7 @@ jobs:
         run: |
           # Configure kubectl with proper AWS credentials  
           export AWS_DEFAULT_REGION=us-east-1
-          aws eks update-kubeconfig --name eks-gateway --region us-east-1 --alias eks-gateway
+          aws eks update-kubeconfig --name eks-gateway-v2 --region us-east-1 --alias eks-gateway-v2
           
           # Proceed with gateway deployment
           echo "Deploying gateway applications..."
