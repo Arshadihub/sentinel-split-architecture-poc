@@ -7,6 +7,11 @@ module "eks" {
   subnet_ids      = var.subnet_ids
   enable_irsa     = true
 
+  # Enable public endpoint access for CI/CD
+  cluster_endpoint_private_access = true
+  cluster_endpoint_public_access  = true
+  cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
+
   # Disable KMS key creation/encryption by default for the PoC
   create_kms_key              = var.create_kms_key
   cluster_encryption_config   = var.cluster_encryption_config

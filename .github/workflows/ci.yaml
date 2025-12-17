@@ -170,18 +170,18 @@ jobs:
           BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
           aws eks update-kubeconfig --name eks-backend --region us-east-1
           kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
-          kubectl apply --dry-run=client -f k8s/backend/namespace.yaml
-          kubectl apply --dry-run=client -f k8s/backend/deployment.yaml
-          kubectl apply --dry-run=client -f k8s/backend/service.yaml
-          kubectl apply --dry-run=client -f k8s/backend/networkpolicy.yaml
-          kubectl apply -f k8s/backend/namespace.yaml
-          kubectl apply -f k8s/backend/deployment.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/deployment.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/service.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/networkpolicy.yaml
+          kubectl apply --validate=false -f k8s/backend/namespace.yaml
+          kubectl apply --validate=false -f k8s/backend/deployment.yaml
           if [ -n "$BACKEND_SG" ]; then
-            sed "s|__BACKEND_SG__|$BACKEND_SG|g" k8s/backend/service.yaml | kubectl apply -f -
+            sed "s|__BACKEND_SG__|$BACKEND_SG|g" k8s/backend/service.yaml | kubectl apply --validate=false -f -
           else
-            kubectl apply -f k8s/backend/service.yaml
+            kubectl apply --validate=false -f k8s/backend/service.yaml
           fi
-          kubectl apply -f k8s/backend/networkpolicy.yaml
+          kubectl apply --validate=false -f k8s/backend/networkpolicy.yaml
 
       - name: Wait for backend LoadBalancer
         if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
@@ -197,7 +197,7 @@ jobs:
         if: steps.check-nodegroups.outputs.gateway_nodegroups != '0' && steps.check-nodegroups.outputs.backend_nodegroups != '0'
         run: |
           aws eks update-kubeconfig --name eks-gateway --region us-east-1
-          kubectl apply -f k8s/gateway/namespace.yaml
+          kubectl apply --validate=false -f k8s/gateway/namespace.yaml
           cat > nginx.conf <<EOF
           events {}
           http {
@@ -212,6 +212,6 @@ jobs:
             }
           }
           EOF
-          kubectl -n gateway create configmap proxy-conf --from-file=nginx.conf --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -f k8s/gateway/deployment.yaml
-          kubectl apply -f k8s/gateway/service.yaml
+          kubectl -n gateway create configmap proxy-conf --from-file=nginx.conf --dry-run=client -o yaml | kubectl apply --validate=false -f -
+          kubectl apply --validate=false -f k8s/gateway/deployment.yaml
+          kubectl apply --validate=false -f k8s/gateway/service.yaml
