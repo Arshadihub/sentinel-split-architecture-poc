@@ -1,7 +1,11 @@
-# Import existing EKS cluster if it exists
-import {
-  to = module.eks_gateway.module.eks.aws_eks_cluster.this[0]
-  id = "eks-gateway"
+# Check if EKS cluster already exists
+data "aws_eks_cluster" "existing_gateway" {
+  count = 1
+  name  = "eks-gateway"
+}
+
+locals {
+  gateway_cluster_exists = can(data.aws_eks_cluster.existing_gateway[0].status)
 }
 
 module "vpc_gateway" {
@@ -14,7 +18,9 @@ module "vpc_gateway" {
   use_existing_vpc_id   = "vpc-0bfde9598df7ce192"
 }
 
+# Only create EKS module if cluster doesn't exist
 module "eks_gateway" {
+  count        = local.gateway_cluster_exists ? 0 : 1
   source       = "../../modules/eks"
   cluster_name = "eks-gateway"
   vpc_id       = module.vpc_gateway.vpc_id

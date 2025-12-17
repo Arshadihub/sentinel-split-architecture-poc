@@ -1,7 +1,11 @@
-# Import existing EKS cluster if it exists
-import {
-  to = module.eks_backend.module.eks.aws_eks_cluster.this[0]
-  id = "eks-backend"
+# Check if EKS cluster already exists
+data "aws_eks_cluster" "existing_backend" {
+  count = 1
+  name  = "eks-backend"
+}
+
+locals {
+  backend_cluster_exists = can(data.aws_eks_cluster.existing_backend[0].status)
 }
 
 module "vpc_backend" {
@@ -14,7 +18,9 @@ module "vpc_backend" {
   use_existing_vpc_id   = "vpc-00d6478acab308f77"
 }
 
+# Only create EKS module if cluster doesn't exist
 module "eks_backend" {
+  count        = local.backend_cluster_exists ? 0 : 1
   source       = "../../modules/eks"
   cluster_name = "eks-backend"
   vpc_id       = module.vpc_backend.vpc_id

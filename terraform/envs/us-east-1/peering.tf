@@ -7,4 +7,10 @@ module "vpc_peering" {
   backend_private_rtb_id = module.vpc_backend.private_route_table_id
   gateway_cidr           = module.vpc_gateway.cidr
   backend_cidr           = module.vpc_backend.cidr
+
+  # Only create peering after VPCs are ready
+  depends_on = [
+    module.vpc_gateway,
+    module.vpc_backend
+  ]
 }
