@@ -30,7 +30,6 @@ module "eks_backend" {
 
 # Create aws-auth ConfigMap for backend cluster
 resource "kubernetes_config_map_v1" "backend_aws_auth" {
-  count    = local.backend_cluster_exists ? 0 : 1
   provider = kubernetes.backend
   
   metadata {
@@ -48,7 +47,7 @@ resource "kubernetes_config_map_v1" "backend_aws_auth" {
     ])
   }
 
-  depends_on = [module.eks_backend]
+  depends_on = [data.aws_eks_cluster.existing_backend]
 }
 
 # Data source to check if security group exists

@@ -30,7 +30,6 @@ module "eks_gateway" {
 
 # Create aws-auth ConfigMap for gateway cluster
 resource "kubernetes_config_map_v1" "gateway_aws_auth" {
-  count    = local.gateway_cluster_exists ? 0 : 1
   provider = kubernetes.gateway
   
   metadata {
@@ -48,5 +47,5 @@ resource "kubernetes_config_map_v1" "gateway_aws_auth" {
     ])
   }
 
-  depends_on = [module.eks_gateway]
+  depends_on = [data.aws_eks_cluster.existing_gateway]
 }

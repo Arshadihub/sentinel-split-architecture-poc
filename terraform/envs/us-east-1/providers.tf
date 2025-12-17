@@ -2,30 +2,37 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Get cluster data for kubernetes providers
+data "aws_eks_cluster" "backend" {
+  name = "eks-backend"
+}
+
+data "aws_eks_cluster_auth" "backend" {
+  name = "eks-backend"
+}
+
+data "aws_eks_cluster" "gateway" {
+  name = "eks-gateway"
+}
+
+data "aws_eks_cluster_auth" "gateway" {
+  name = "eks-gateway"
+}
+
 # Kubernetes provider for backend cluster
 provider "kubernetes" {
   alias = "backend"
   
-  host                   = length(module.eks_backend) > 0 ? module.eks_backend[0].cluster_endpoint : ""
-  cluster_ca_certificate = length(module.eks_backend) > 0 ? base64decode(module.eks_backend[0].cluster_certificate_authority_data) : ""
-  
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args = ["eks", "get-token", "--cluster-name", "eks-backend", "--region", "us-east-1"]
-  }
+  host                   = data.aws_eks_cluster.backend.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.backend.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.backend.token
 }
 
 # Kubernetes provider for gateway cluster  
 provider "kubernetes" {
   alias = "gateway"
   
-  host                   = length(module.eks_gateway) > 0 ? module.eks_gateway[0].cluster_endpoint : ""
-  cluster_ca_certificate = length(module.eks_gateway) > 0 ? base64decode(module.eks_gateway[0].cluster_certificate_authority_data) : ""
-  
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args = ["eks", "get-token", "--cluster-name", "eks-gateway", "--region", "us-east-1"]
-  }
+  host                   = data.aws_eks_cluster.gateway.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.gateway.certificate_authority[0].data)
+  token                  = data.aws_eks_cluster_auth.gateway.token
 }
