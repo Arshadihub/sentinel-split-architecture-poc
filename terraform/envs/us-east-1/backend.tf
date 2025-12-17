@@ -28,6 +28,39 @@ module "eks_backend" {
   env          = "backend"
 }
 
+# Create aws-auth ConfigMap for backend cluster
+resource "kubernetes_config_map_v1" "backend_aws_auth" {
+  count    = local.backend_cluster_exists ? 0 : 1
+  provider = kubernetes.backend
+  
+  metadata {
+    name      = "aws-auth"
+    namespace = "kube-system"
+  }
+
+  data = {
+    mapRoles = yamlencode([
+      {
+        rolearn  = module.eks_backend[0].eks_managed_node_groups.default.iam_role_arn
+        username = "system:node:{{EC2PrivateDNSName}}"
+        groups = [
+          "system:bootstrappers",
+          "system:nodes"
+        ]
+      }
+    ])
+    mapUsers = yamlencode([
+      {
+        userarn  = "arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com"
+        username = "github-actions"
+        groups   = ["system:masters"]
+      }
+    ])
+  }
+
+  depends_on = [module.eks_backend]
+}
+
 # Data source to check if security group exists
 data "aws_security_groups" "existing_backend_lb_sg" {
   filter {
