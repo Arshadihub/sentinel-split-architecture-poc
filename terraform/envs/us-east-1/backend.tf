@@ -18,44 +18,13 @@ module "vpc_backend" {
   use_existing_vpc_id   = "vpc-00d6478acab308f77"
 }
 
-# Only create EKS module if cluster doesn't exist
+# Force recreation of EKS cluster so GitHub Actions user is the creator
 module "eks_backend" {
-  count        = local.backend_cluster_exists ? 0 : 1
   source       = "../../modules/eks"
   cluster_name = "eks-backend"
   vpc_id       = module.vpc_backend.vpc_id
   subnet_ids   = module.vpc_backend.private_subnet_ids
   env          = "backend"
-}
-
-# Create aws-auth ConfigMap for backend cluster using kubectl
-resource "null_resource" "backend_aws_auth" {
-  provisioner "local-exec" {
-    command = <<-EOF
-      # Wait for cluster to be ready
-      sleep 30
-      
-      # Update kubeconfig
-      aws eks update-kubeconfig --name eks-backend --region us-east-1 --alias eks-backend
-      
-      # Create aws-auth ConfigMap
-      cat <<YAML | kubectl apply --validate=false -f -
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: aws-auth
-  namespace: kube-system
-data:
-  mapUsers: |
-    - userarn: arn:aws:iam::721500739616:user/arshadcsinfo@gmail.com
-      username: github-actions
-      groups:
-        - system:masters
-YAML
-    EOF
-  }
-  
-  depends_on = [data.aws_eks_cluster.existing_backend]
 }
 
 # Data source to check if security group exists
