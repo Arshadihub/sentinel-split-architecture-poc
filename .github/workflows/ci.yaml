@@ -37,6 +37,22 @@ jobs:
         run: terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
 
+      - name: Cleanup conflicting CloudWatch Log Groups
+        run: |
+          echo "Cleaning up existing EKS CloudWatch log groups that might conflict..."
+          
+          # Delete existing log groups for our clusters
+          log_groups=("/aws/eks/eks-backend-v2/cluster" "/aws/eks/eks-gateway-v2/cluster")
+          
+          for log_group in "${log_groups[@]}"; do
+            if aws logs describe-log-groups --log-group-name-prefix "$log_group" --query 'logGroups[0].logGroupName' --output text 2>/dev/null | grep -q "$log_group"; then
+              echo "Deleting existing log group: $log_group"
+              aws logs delete-log-group --log-group-name "$log_group" || echo "Failed to delete $log_group (might not exist)"
+            else
+              echo "Log group $log_group does not exist, skipping"
+            fi
+          done
+
       - name: Import CloudWatch Log Groups (before plan)
         run: pwsh ./scripts/import-loggroups.ps1
 
