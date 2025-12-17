@@ -32,7 +32,42 @@ jobs:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
-
+      - name: Check Current AWS Resource Status
+        run: |
+          echo "=== Checking Current Resource Status ==="
+          
+          echo "EKS Clusters:"
+          aws eks list-clusters --output table || echo "No EKS access or no clusters"
+          
+          echo -e "\nVPC Status Check:"
+          VPCS=("vpc-0bfde9598df7ce192" "vpc-00d6478acab308f77" "vpc-00d0f3047c3b842c3" "vpc-06f41f6a58ed514d8" "vpc-0fb2a9eac411d6336" "vpc-0fa0a67e28bbc481a")
+          REMAINING_VPCS=0
+          
+          for VPC in "${VPCS[@]}"; do
+            if aws ec2 describe-vpcs --vpc-ids $VPC >/dev/null 2>&1; then
+              echo "❌ VPC $VPC still exists"
+              REMAINING_VPCS=$((REMAINING_VPCS + 1))
+              # Check key dependencies quickly
+              INSTANCES=$(aws ec2 describe-instances --filters "Name=vpc-id,Values=$VPC" "Name=instance-state-name,Values=running,pending,stopping" --query 'Reservations[].Instances[].InstanceId' --output text | wc -w)
+              ENIS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | wc -w)
+              echo "  Dependencies: $INSTANCES instances, $ENIS ENIs"
+            else
+              echo "✅ VPC $VPC deleted successfully!"
+            fi
+          done
+          
+          echo -e "\nVPC Quota Status:"
+          VPC_COUNT=$(aws ec2 describe-vpcs --query 'Vpcs | length(@)' --output text)
+          echo "Current VPC count: $VPC_COUNT/5"
+          echo "VPCs to clean up: $REMAINING_VPCS"
+          
+          if [ $REMAINING_VPCS -eq 0 ]; then
+            echo "🎉 All target VPCs cleaned up! Ready for new deployment."
+            echo "CLEANUP_COMPLETE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Still need to clean up $REMAINING_VPCS VPCs"
+            echo "CLEANUP_COMPLETE=false" >> $GITHUB_ENV
+          fi
       - name: Cleanup Terraform Cache and Init
         run: |
           # Remove terraform cache to ensure clean state
@@ -43,6 +78,7 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       - name: Cleanup conflicting CloudWatch Log Groups
+        if: env.CLEANUP_COMPLETE != 'true'
         run: |
           echo "Cleaning up existing EKS CloudWatch log groups that might conflict..."
           
@@ -59,6 +95,7 @@ jobs:
           done
           
       - name: Force cleanup of failed EKS resources
+        if: env.CLEANUP_COMPLETE != 'true'
         run: |
           echo "Aggressively cleaning up any remaining EKS resources..."
           
