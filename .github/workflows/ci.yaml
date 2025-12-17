@@ -33,8 +33,13 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
 
-      - name: Terraform Init
-        run: terraform init
+      - name: Cleanup Terraform Cache and Init
+        run: |
+          # Remove terraform cache to ensure clean state
+          rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup .terraform.tfstate.lock.info
+          
+          # Fresh terraform init
+          terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
 
       - name: Cleanup conflicting CloudWatch Log Groups
