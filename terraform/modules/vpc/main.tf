@@ -27,6 +27,15 @@ data "aws_subnets" "existing_private" {
   }
 }
 
+data "aws_route_tables" "existing_private" {
+  count = var.use_existing_vpc_id != "" ? 1 : 0
+  vpc_id = var.use_existing_vpc_id
+  filter {
+    name   = "tag:Name"
+    values = ["*private*"]
+  }
+}
+
 resource "aws_vpc" "this" {
   count                = var.use_existing_vpc_id != "" ? 0 : 1
   cidr_block           = var.cidr
@@ -136,9 +145,9 @@ output "private_subnet_ids" {
 }
 
 output "private_route_table_id" {
-  value = var.use_existing_vpc_id != "" ? "" : aws_route_table.private[0].id
+  value = var.use_existing_vpc_id != "" ? (length(data.aws_route_tables.existing_private[0].ids) > 0 ? data.aws_route_tables.existing_private[0].ids[0] : "") : aws_route_table.private[0].id
 }
 
 output "private_route_table_ids" {
-  value = var.use_existing_vpc_id != "" ? [] : [for rt in aws_route_table.private : rt.id]
+  value = var.use_existing_vpc_id != "" ? data.aws_route_tables.existing_private[0].ids : [for rt in aws_route_table.private : rt.id]
 }

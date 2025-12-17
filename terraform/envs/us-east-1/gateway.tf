@@ -1,3 +1,9 @@
+# Import existing EKS cluster if it exists
+import {
+  to = module.eks_gateway.module.eks.aws_eks_cluster.this[0]
+  id = "eks-gateway"
+}
+
 module "vpc_gateway" {
   source = "../../modules/vpc"
 

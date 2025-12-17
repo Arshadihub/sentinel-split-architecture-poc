@@ -1,3 +1,9 @@
+# Import existing EKS cluster if it exists
+import {
+  to = module.eks_backend.module.eks.aws_eks_cluster.this[0]
+  id = "eks-backend"
+}
+
 module "vpc_backend" {
   source = "../../modules/vpc"
 
@@ -16,9 +22,21 @@ module "eks_backend" {
   env          = "backend"
 }
 
-# Security group for backend internal LoadBalancer allowing only gateway VPC CIDR
-# Use ignore_changes to avoid conflicts if already exists
+# Data source to check if security group exists
+data "aws_security_groups" "existing_backend_lb_sg" {
+  filter {
+    name   = "vpc-id"
+    values = [module.vpc_backend.vpc_id]
+  }
+  filter {
+    name   = "group-name"
+    values = ["backend-lb-sg"]
+  }
+}
+
+# Security group for backend internal LoadBalancer (conditional creation)
 resource "aws_security_group" "backend_lb_sg" {
+  count       = length(data.aws_security_groups.existing_backend_lb_sg.ids) == 0 ? 1 : 0
   name        = "backend-lb-sg"
   description = "Allow only gateway VPC CIDR to access backend LB"
   vpc_id      = module.vpc_backend.vpc_id
@@ -41,12 +59,8 @@ resource "aws_security_group" "backend_lb_sg" {
   tags = {
     Name = "backend-lb-sg"
   }
-
-  lifecycle {
-    ignore_changes = [name, description]
-  }
 }
 
 output "backend_lb_sg_id" {
-  value = aws_security_group.backend_lb_sg.id
+  value = length(data.aws_security_groups.existing_backend_lb_sg.ids) > 0 ? data.aws_security_groups.existing_backend_lb_sg.ids[0] : aws_security_group.backend_lb_sg[0].id
 }
