@@ -5,7 +5,8 @@ module "vpc_backend" {
   cidr                  = "10.20.0.0/16"
   azs                   = ["us-east-1a", "us-east-1b"]
   single_nat_gateway    = true
-  use_existing_vpc_id   = "vpc-00d6478acab308f77"
+  # Create new VPC instead of using existing
+  use_existing_vpc_id   = ""
 }
 
 # Force recreation of EKS cluster so GitHub Actions user is the creator
@@ -13,7 +14,7 @@ module "eks_backend" {
   source       = "../../modules/eks"
   cluster_name = "eks-backend-v2"
   vpc_id       = module.vpc_backend.vpc_id
-  subnet_ids   = module.vpc_backend.public_subnet_ids
+  subnet_ids   = module.vpc_backend.private_subnet_ids
   env          = "backend"
 }
 
