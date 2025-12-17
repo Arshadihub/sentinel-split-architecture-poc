@@ -18,21 +18,8 @@ module "eks_backend" {
   env          = "backend"
 }
 
-# Data source to check if security group exists
-data "aws_security_groups" "existing_backend_lb_sg" {
-  filter {
-    name   = "vpc-id"
-    values = [module.vpc_backend.vpc_id]
-  }
-  filter {
-    name   = "group-name"
-    values = ["backend-lb-sg"]
-  }
-}
-
-# Security group for backend internal LoadBalancer (conditional creation)
+# Security group for backend internal LoadBalancer
 resource "aws_security_group" "backend_lb_sg" {
-  count       = length(data.aws_security_groups.existing_backend_lb_sg.ids) == 0 ? 1 : 0
   name        = "backend-lb-sg"
   description = "Allow only gateway VPC CIDR to access backend LB"
   vpc_id      = module.vpc_backend.vpc_id
@@ -58,5 +45,5 @@ resource "aws_security_group" "backend_lb_sg" {
 }
 
 output "backend_lb_sg_id" {
-  value = length(data.aws_security_groups.existing_backend_lb_sg.ids) > 0 ? data.aws_security_groups.existing_backend_lb_sg.ids[0] : aws_security_group.backend_lb_sg[0].id
+  value = aws_security_group.backend_lb_sg.id
 }
