@@ -24,10 +24,18 @@ if ($env:TF_WORKING_DIR -and $env:TF_WORKING_DIR -ne "") {
 Write-Host "Running terraform init (if needed)..."
 terraform init
 
+# Check that VPC and peering resources exist in state (route tables must exist)
+$vpcState = terraform state list | Select-String 'module.vpc_gateway|module.vpc_backend'
+$peeringState = terraform state list | Select-String 'module.vpc_peering'
+if (-not $vpcState -or -not $peeringState) {
+	Write-Host "ERROR: VPC and peering resources must exist in Terraform state before importing log groups. Run the VPC and peering applies first."
+	exit 1
+}
+
 Write-Host "Importing CloudWatch Log Group for eks-backend..."
 terraform import "module.eks_backend.module.eks.aws_cloudwatch_log_group.this[0]" "/aws/eks/eks-backend/cluster"
 
 Write-Host "Importing CloudWatch Log Group for eks-gateway..."
-terraform import "module.eks_gateway.module.eks.aws_cloudwatch_log_group.this[0]" "/aws/eks/eks-gateway/cluster"
+terraform import "module.eks_gateway.module.eks.aws_cloudwatch_log_group.this[0]" "/aws/eks-gateway/cluster"
 
 Write-Host "Imports complete. Run 'terraform plan' to verify." 

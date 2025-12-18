@@ -118,6 +118,14 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve -target=module.vpc_peering
 
+        - name: Upload Terraform state after peering apply
+          uses: actions/upload-artifact@v3
+          with:
+            name: tfstate-after-peering
+            path: |
+              ${{ env.TF_WORKING_DIR }}/.terraform
+              ${{ env.TF_WORKING_DIR }}/terraform.tfstate*
+
       - name: Import existing CloudWatch Log Groups
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
@@ -128,6 +136,12 @@ jobs:
           terraform import -allow-missing-config -input=false \
             module.eks_gateway.module.eks.aws_cloudwatch_log_group.this[0] \
             /aws/eks/eks-gateway/cluster || echo "Gateway log group import skipped or already imported"
+
+        - name: Download Terraform state before final apply
+          uses: actions/download-artifact@v3
+          with:
+            name: tfstate-after-peering
+            path: ${{ env.TF_WORKING_DIR }}
 
       - name: Terraform apply (all resources)
         working-directory: ${{ env.TF_WORKING_DIR }}
