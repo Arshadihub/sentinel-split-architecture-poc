@@ -95,11 +95,47 @@ for vpc in $(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" -
   done
 done
 
-# Verify all non-default VPCs are deleted
+
+# Extra aggressive cleanup if VPCs still remain
 remaining_vpcs=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text)
 if [ -n "$remaining_vpcs" ]; then
-  echo "ERROR: The following non-default VPCs remain after cleanup: $remaining_vpcs"
-  exit 1
+  echo "WARNING: The following non-default VPCs remain after initial cleanup: $remaining_vpcs"
+  for vpc in $remaining_vpcs; do
+    echo "Force deleting VPC $vpc..."
+    # Delete any remaining NAT gateways
+    for nat in $(aws ec2 describe-nat-gateways --filter Name=vpc-id,Values=$vpc --query "NatGateways[].NatGatewayId" --output text); do
+      echo "Deleting NAT Gateway: $nat"
+      aws ec2 delete-nat-gateway --nat-gateway-id "$nat" || true
+      aws ec2 wait nat-gateway-deleted --nat-gateway-ids "$nat" || true
+    done
+    # Delete any remaining IGWs
+    for igw in $(aws ec2 describe-internet-gateways --filters Name=attachment.vpc-id,Values=$vpc --query "InternetGateways[].InternetGatewayId" --output text); do
+      echo "Detaching and deleting IGW: $igw"
+      aws ec2 detach-internet-gateway --internet-gateway-id "$igw" --vpc-id "$vpc" || true
+      aws ec2 delete-internet-gateway --internet-gateway-id "$igw" || true
+    done
+    # Delete any remaining ENIs
+    for eni in $(aws ec2 describe-network-interfaces --filters Name=vpc-id,Values=$vpc --query "NetworkInterfaces[].NetworkInterfaceId" --output text); do
+      echo "Deleting network interface: $eni"
+      aws ec2 delete-network-interface --network-interface-id "$eni" || true
+    done
+    # Delete any remaining VPC endpoints
+    for vpce in $(aws ec2 describe-vpc-endpoints --filters Name=vpc-id,Values=$vpc --query "VpcEndpoints[].VpcEndpointId" --output text); do
+      echo "Deleting VPC endpoint: $vpce"
+      aws ec2 delete-vpc-endpoints --vpc-endpoint-ids "$vpce" || true
+    done
+    # Try to delete the VPC again
+    echo "Attempting to delete VPC: $vpc (forced)"
+    aws ec2 delete-vpc --vpc-id "$vpc" || echo "Could not delete VPC $vpc (will try again later)"
+  done
+  # Final check
+  final_vpcs=$(aws ec2 describe-vpcs --query "Vpcs[?IsDefault==\`false\`].VpcId" --output text)
+  if [ -n "$final_vpcs" ]; then
+    echo "ERROR: The following non-default VPCs still remain after forced cleanup: $final_vpcs"
+    exit 1
+  else
+    echo "All non-default VPCs have been deleted after forced cleanup."
+  fi
 else
   echo "All non-default VPCs have been deleted."
 fi
