@@ -14,7 +14,7 @@ module "eks" {
 
   # Disable KMS key creation/encryption by default for the PoC
   create_kms_key              = var.create_kms_key
-  cluster_encryption_config   = var.cluster_encryption_config
+  cluster_encryption_config    = var.cluster_encryption_config
 
   # Enable cluster creator admin permissions
   enable_cluster_creator_admin_permissions = true
@@ -25,8 +25,8 @@ module "eks" {
       max_size       = 3
       desired_size   = 2
       instance_types = ["t3.medium"]
-      
-      # CRITICAL: Ensure nodes are ONLY in private subnets
+
+      # Ensure nodes are ONLY in private subnets
       subnet_ids = var.subnet_ids  # These MUST be private subnet IDs only
     }
   }
