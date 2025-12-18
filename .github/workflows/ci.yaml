@@ -19,6 +19,9 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION }}
     steps:
+      - name: Aggressive AWS VPC/EIP/Peering Cleanup
+        run: bash scripts/cleanup-aws-vpcs.sh
+
       - name: Checkout
         uses: actions/checkout@v4
 
