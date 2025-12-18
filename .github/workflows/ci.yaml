@@ -103,6 +103,10 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve -target=module.vpc_gateway -target=module.vpc_backend
 
+      - name: Terraform targeted apply (Peering only)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve -target=module.vpc_peering
+
       - name: Import existing CloudWatch Log Groups
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
