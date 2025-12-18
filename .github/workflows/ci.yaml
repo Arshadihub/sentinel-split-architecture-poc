@@ -102,9 +102,17 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
+
       - name: Terraform targeted apply (VPCs only)
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve -target=module.vpc_gateway -target=module.vpc_backend
+
+      - name: Terraform refresh (ensure outputs are up to date)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform refresh
+
+      - name: Wait for AWS resource propagation
+        run: sleep 30
 
       - name: Terraform targeted apply (Peering only)
         working-directory: ${{ env.TF_WORKING_DIR }}
