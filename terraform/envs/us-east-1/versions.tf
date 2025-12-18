@@ -1,14 +1,6 @@
 terraform {
   required_version = ">= 1.5.0"
 
-  backend "s3" {
-    bucket         = "sentinel-split-architecture-poc-721500739616"
-    key            = "terraform/us-east-1/terraform.tfstate"
-    region         = "us-east-1"
-    dynamodb_table = "terraform-locks"
-    encrypt        = true
-  }
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
