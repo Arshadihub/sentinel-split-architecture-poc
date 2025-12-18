@@ -43,14 +43,14 @@ function Remove-EKSNodeGroup {
                     }
                 } while ($checkGroup -and $checkGroup.nodegroup.status -eq "DELETING")
                 
-                Write-Host "✅ Node group deleted successfully" -ForegroundColor Green
+                Write-Host "Node group deleted successfully" -ForegroundColor Green
             }
         } else {
             Write-Host "Node group not found - already clean" -ForegroundColor Green
         }
     }
     catch {
-        Write-Host "⚠️ Error checking/deleting node group: $_" -ForegroundColor Yellow
+        Write-Host "Error checking/deleting node group: $_" -ForegroundColor Yellow
     }
 }
 
@@ -65,24 +65,24 @@ function Remove-SecurityGroup {
             $sgId = $sg.SecurityGroups[0].GroupId
             Write-Host "Deleting security group: $GroupName ($sgId)" -ForegroundColor Red
             aws ec2 delete-security-group --group-id $sgId
-            Write-Host "✅ Security group deleted" -ForegroundColor Green
+            Write-Host "Security group deleted" -ForegroundColor Green
         } else {
             Write-Host "Security group $GroupName not found - already clean" -ForegroundColor Green
         }
     }
     catch {
-        Write-Host "⚠️ Error deleting security group: $_" -ForegroundColor Yellow
+        Write-Host "Error deleting security group: $_" -ForegroundColor Yellow
     }
 }
 
 # Cleanup failed node groups
-Write-Host "`n🔧 Cleaning up EKS node groups..." -ForegroundColor Cyan
+Write-Host "`nCleaning up EKS node groups..." -ForegroundColor Cyan
 Remove-EKSNodeGroup -ClusterName "eks-gateway" -NodeGroupName "default-2025121620544954460000001c"
 Remove-EKSNodeGroup -ClusterName "eks-backend" -NodeGroupName "default-20251216215722559100000015"
 
 # Cleanup conflicting security groups  
-Write-Host "`n🔧 Cleaning up security groups..." -ForegroundColor Cyan
+Write-Host "`nCleaning up security groups..." -ForegroundColor Cyan
 Remove-SecurityGroup -GroupName "backend-lb-sg" -VpcId "vpc-00d6478acab308f77"
 
-Write-Host "`n✅ Cleanup completed!" -ForegroundColor Green
+Write-Host "`nCleanup completed!" -ForegroundColor Green
 Write-Host "You can now retry the deployment with the fixes applied." -ForegroundColor White

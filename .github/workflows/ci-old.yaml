@@ -1,0 +1,448 @@
+name: sentinel-poc
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  TF_WORKING_DIR: terraform/envs/us-east-1
+
+jobs:
+  ci-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.8.5
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION || 'us-east-1' }}
+      - name: Check Current AWS Resource Status
+        run: |
+          echo "=== Checking Current Resource Status ==="
+          
+          echo "EKS Clusters:"
+          aws eks list-clusters --output table || echo "No EKS access or no clusters"
+          
+          echo -e "\nVPC Status Check:"
+          VPCS=("vpc-0bfde9598df7ce192" "vpc-00d6478acab308f77" "vpc-00d0f3047c3b842c3" "vpc-06f41f6a58ed514d8" "vpc-0fb2a9eac411d6336" "vpc-0fa0a67e28bbc481a")
+          REMAINING_VPCS=0
+          
+          for VPC in "${VPCS[@]}"; do
+            if aws ec2 describe-vpcs --vpc-ids $VPC >/dev/null 2>&1; then
+              echo "❌ VPC $VPC still exists"
+              REMAINING_VPCS=$((REMAINING_VPCS + 1))
+              # Check key dependencies quickly
+              INSTANCES=$(aws ec2 describe-instances --filters "Name=vpc-id,Values=$VPC" "Name=instance-state-name,Values=running,pending,stopping" --query 'Reservations[].Instances[].InstanceId' --output text | wc -w)
+              ENIS=$(aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | wc -w)
+              echo "  Dependencies: $INSTANCES instances, $ENIS ENIs"
+            else
+              echo "✅ VPC $VPC deleted successfully!"
+            fi
+          done
+          
+          echo -e "\nVPC Quota Status:"
+          VPC_COUNT=$(aws ec2 describe-vpcs --query 'Vpcs | length(@)' --output text)
+          echo "Current VPC count: $VPC_COUNT/5"
+          echo "VPCs to clean up: $REMAINING_VPCS"
+          
+          if [ $REMAINING_VPCS -eq 0 ]; then
+            echo "🎉 All target VPCs cleaned up! Ready for new deployment."
+            echo "CLEANUP_COMPLETE=true" >> $GITHUB_ENV
+          else
+            echo "⚠️ Still need to clean up $REMAINING_VPCS VPCs"
+            echo "CLEANUP_COMPLETE=false" >> $GITHUB_ENV
+          fi
+      - name: Cleanup Terraform Cache and Init
+        run: |
+          # Remove terraform cache to ensure clean state
+          rm -rf .terraform .terraform.lock.hcl terraform.tfstate terraform.tfstate.backup .terraform.tfstate.lock.info
+          
+          # Fresh terraform init
+          terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Cleanup conflicting CloudWatch Log Groups
+        if: env.CLEANUP_COMPLETE != 'true'
+        run: |
+          echo "Cleaning up existing EKS CloudWatch log groups that might conflict..."
+          
+          # Delete existing log groups for our clusters
+          log_groups=("/aws/eks/eks-backend-v2/cluster" "/aws/eks/eks-gateway-v2/cluster")
+          
+          for log_group in "${log_groups[@]}"; do
+            if aws logs describe-log-groups --log-group-name-prefix "$log_group" --query 'logGroups[0].logGroupName' --output text 2>/dev/null | grep -q "$log_group"; then
+              echo "Deleting existing log group: $log_group"
+              aws logs delete-log-group --log-group-name "$log_group" || echo "Failed to delete $log_group (might not exist)"
+            else
+              echo "Log group $log_group does not exist, skipping"
+            fi
+          done
+          
+      - name: Force cleanup of failed EKS resources
+        if: env.CLEANUP_COMPLETE != 'true'
+        run: |
+          echo "Aggressively cleaning up any remaining EKS resources..."
+          
+          # Delete any existing EKS clusters with our names
+          for cluster in "eks-backend-v2" "eks-gateway-v2"; do
+            if aws eks describe-cluster --name "$cluster" >/dev/null 2>&1; then
+              echo "Found existing cluster $cluster, deleting..."
+              
+              # Delete node groups first
+              aws eks list-nodegroups --cluster-name "$cluster" --query 'nodegroups[]' --output text | while read -r nodegroup; do
+                if [ -n "$nodegroup" ]; then
+                  echo "Deleting nodegroup $nodegroup from $cluster"
+                  aws eks delete-nodegroup --cluster-name "$cluster" --nodegroup-name "$nodegroup" || true
+                fi
+              done
+              
+              # Wait for nodegroups to be fully deleted
+              echo "Waiting for nodegroups to be fully deleted from $cluster..."
+              max_wait=600  # 10 minutes max
+              wait_time=0
+              while [ $wait_time -lt $max_wait ]; do
+                nodegroup_count=$(aws eks list-nodegroups --cluster-name "$cluster" --query 'length(nodegroups)' --output text 2>/dev/null || echo "0")
+                if [ "$nodegroup_count" = "0" ]; then
+                  echo "All nodegroups deleted from $cluster"
+                  break
+                fi
+                echo "Still waiting... $nodegroup_count nodegroups remaining (waited ${wait_time}s)"
+                sleep 30
+                wait_time=$((wait_time + 30))
+              done
+              
+              # Delete the cluster
+              echo "Deleting cluster $cluster"
+              aws eks delete-cluster --name "$cluster" || echo "Failed to delete $cluster (might not exist)"
+            fi
+          done
+          
+          echo "EKS cleanup completed"
+
+      - name: Force VPC cleanup to free quota
+        run: |
+          echo "Aggressively cleaning VPCs to free quota..."
+          
+          # List all VPCs to see what we're dealing with
+          echo "Current VPCs:"
+          aws ec2 describe-vpcs --output table || true
+          
+          # Get current VPC count
+          VPC_COUNT=$(aws ec2 describe-vpcs --query 'length(Vpcs)')
+          echo "Current VPC count: $VPC_COUNT"
+          
+          # If we're close to limit, be aggressive
+          if [ "$VPC_COUNT" -ge 4 ]; then
+            echo "VPC count is high, forcing aggressive cleanup..."
+            
+            # Target old vpc-gateway and vpc-backend VPCs specifically
+            for vpc_name in "vpc-gateway" "vpc-backend"; do
+              VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=$vpc_name" --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
+              if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+                echo "Force deleting VPC $vpc_name ($VPC_ID)..."
+                
+                # Force terminate any instances in the VPC
+                aws ec2 describe-instances --filters "Name=vpc-id,Values=$VPC_ID" --query 'Reservations[].Instances[].InstanceId' --output text | tr '\t' '\n' | while read -r instance_id; do
+                  if [ -n "$instance_id" ]; then
+                    echo "Force terminating instance: $instance_id"
+                    aws ec2 terminate-instances --instance-ids "$instance_id" || true
+                  fi
+                done
+                
+                # Wait briefly for terminations
+                sleep 10
+                
+                # Delete load balancers
+                aws elbv2 describe-load-balancers --query 'LoadBalancers[?VpcId==`'$VPC_ID'`].LoadBalancerArn' --output text | tr '\t' '\n' | while read -r lb_arn; do
+                  [ -n "$lb_arn" ] && echo "Deleting LB: $lb_arn" && aws elbv2 delete-load-balancer --load-balancer-arn "$lb_arn" || true
+                done
+                
+                # Delete NAT gateways
+                aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$VPC_ID" "Name=state,Values=available" --query 'NatGateways[].NatGatewayId' --output text | tr '\t' '\n' | while read -r nat_id; do
+                  [ -n "$nat_id" ] && echo "Deleting NAT: $nat_id" && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" || true
+                done
+                
+                # Wait for NAT gateways to delete
+                echo "Waiting for NAT gateways to delete..."
+                sleep 30
+                
+                # Delete network interfaces
+                aws ec2 describe-network-interfaces --filters "Name=vpc-id,Values=$VPC_ID" --query 'NetworkInterfaces[].NetworkInterfaceId' --output text | tr '\t' '\n' | while read -r eni_id; do
+                  [ -n "$eni_id" ] && echo "Deleting ENI: $eni_id" && aws ec2 delete-network-interface --network-interface-id "$eni_id" 2>/dev/null || true
+                done
+                
+                # Delete VPC peering connections
+                aws ec2 describe-vpc-peering-connections --filters "Name=requester-vpc-info.vpc-id,Values=$VPC_ID" "Name=accepter-vpc-info.vpc-id,Values=$VPC_ID" --query 'VpcPeeringConnections[].VpcPeeringConnectionId' --output text | tr '\t' '\n' | while read -r pcx_id; do
+                  [ -n "$pcx_id" ] && echo "Deleting peering: $pcx_id" && aws ec2 delete-vpc-peering-connection --vpc-peering-connection-id "$pcx_id" || true
+                done
+                
+                # Delete endpoints
+                aws ec2 describe-vpc-endpoints --filters "Name=vpc-id,Values=$VPC_ID" --query 'VpcEndpoints[].VpcEndpointId' --output text | tr '\t' '\n' | while read -r vpce_id; do
+                  [ -n "$vpce_id" ] && echo "Deleting endpoint: $vpce_id" && aws ec2 delete-vpc-endpoint --vpc-endpoint-id "$vpce_id" || true
+                done
+                
+                # Delete internet gateways
+                aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$VPC_ID" --query 'InternetGateways[].InternetGatewayId' --output text | tr '\t' '\n' | while read -r igw_id; do
+                  if [ -n "$igw_id" ]; then
+                    echo "Detaching and deleting IGW: $igw_id"
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$VPC_ID" || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" || true
+                  fi
+                done
+                
+                # Delete subnets
+                aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
+                  [ -n "$subnet_id" ] && echo "Deleting subnet: $subnet_id" && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
+                done
+                
+                # Delete route tables (except main)
+                aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$VPC_ID" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
+                  [ -n "$rt_id" ] && echo "Deleting route table: $rt_id" && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
+                done
+                
+                # Delete security groups (except default)
+                aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$VPC_ID" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read -r sg_id; do
+                  [ -n "$sg_id" ] && echo "Deleting security group: $sg_id" && aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
+                done
+                
+                # Finally delete VPC
+                echo "Attempting to delete VPC: $VPC_ID"
+                aws ec2 delete-vpc --vpc-id "$VPC_ID" && echo "Successfully deleted VPC: $VPC_ID" || echo "Could not delete VPC $VPC_ID (will try again later)"
+              fi
+            done
+          fi
+          
+          echo "Forced VPC cleanup complete"
+
+      - name: Import CloudWatch Log Groups (before plan)
+        run: pwsh ./scripts/import-loggroups.ps1
+
+      - name: Cleanup unused AWS resources (free quota)
+        run: |
+          echo "Cleaning up unused VPCs and EIPs to free quota..."
+          
+          # Release unattached EIPs
+          echo "Releasing unattached Elastic IPs..."
+          aws ec2 describe-addresses --query 'Addresses[?AssociationId==null].AllocationId' --output text | tr '\t' '\n' | while read -r allocation_id; do
+            if [ -n "$allocation_id" ] && [ "$allocation_id" != "None" ]; then
+              echo "Releasing EIP: $allocation_id"
+              aws ec2 release-address --allocation-id "$allocation_id" || echo "Failed to release $allocation_id"
+            fi
+          done
+          
+          # More aggressive VPC cleanup - target old/unused VPCs
+          echo "Deleting unused VPCs..."
+          
+          # First, list all non-default VPCs for visibility
+          echo "Current non-default VPCs:"
+          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false].[VpcId,Tags[?Key==`Name`].Value|[0],State]' --output table || true
+          
+          # Delete VPCs without active resources
+          aws ec2 describe-vpcs --query 'Vpcs[?IsDefault==false].VpcId' --output text | tr '\t' '\n' | while read -r vpc_id; do
+            if [ -n "$vpc_id" ]; then
+              echo "Checking VPC: $vpc_id"
+              
+              # Check if VPC has any instances
+              INSTANCE_COUNT=$(aws ec2 describe-instances --filters "Name=vpc-id,Values=$vpc_id" "Name=instance-state-name,Values=pending,running,shutting-down,stopping,stopped" --query 'length(Reservations[].Instances[])')
+              
+              if [ "$INSTANCE_COUNT" = "0" ]; then
+                echo "Attempting to clean VPC: $vpc_id (no active instances)"
+                
+                # Delete NAT gateways first
+                aws ec2 describe-nat-gateways --filter "Name=vpc-id,Values=$vpc_id" --query 'NatGateways[].NatGatewayId' --output text | tr '\t' '\n' | while read -r nat_id; do
+                  [ -n "$nat_id" ] && echo "Deleting NAT Gateway: $nat_id" && aws ec2 delete-nat-gateway --nat-gateway-id "$nat_id" 2>/dev/null || true
+                done
+                
+                # Wait briefly for NAT gateways to delete
+                sleep 5
+                
+                # Delete internet gateways
+                aws ec2 describe-internet-gateways --filters "Name=attachment.vpc-id,Values=$vpc_id" --query 'InternetGateways[].InternetGatewayId' --output text | tr '\t' '\n' | while read -r igw_id; do
+                  if [ -n "$igw_id" ]; then
+                    echo "Detaching and deleting IGW: $igw_id"
+                    aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" 2>/dev/null || true
+                    aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" 2>/dev/null || true
+                  fi
+                done
+                
+                # Delete subnets
+                aws ec2 describe-subnets --filters "Name=vpc-id,Values=$vpc_id" --query 'Subnets[].SubnetId' --output text | tr '\t' '\n' | while read -r subnet_id; do
+                  [ -n "$subnet_id" ] && echo "Deleting subnet: $subnet_id" && aws ec2 delete-subnet --subnet-id "$subnet_id" 2>/dev/null || true
+                done
+                
+                # Delete route tables (except main)
+                aws ec2 describe-route-tables --filters "Name=vpc-id,Values=$vpc_id" --query 'RouteTables[?Associations[0].Main!=true].RouteTableId' --output text | tr '\t' '\n' | while read -r rt_id; do
+                  [ -n "$rt_id" ] && echo "Deleting route table: $rt_id" && aws ec2 delete-route-table --route-table-id "$rt_id" 2>/dev/null || true
+                done
+                
+                # Delete security groups (except default)
+                aws ec2 describe-security-groups --filters "Name=vpc-id,Values=$vpc_id" --query 'SecurityGroups[?GroupName!=`default`].GroupId' --output text | tr '\t' '\n' | while read -r sg_id; do
+                  [ -n "$sg_id" ] && echo "Deleting security group: $sg_id" && aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null || true
+                done
+                
+                # Finally delete VPC
+                echo "Deleting VPC: $vpc_id"
+                aws ec2 delete-vpc --vpc-id "$vpc_id" && echo "Successfully deleted VPC: $vpc_id" || echo "Could not delete VPC $vpc_id"
+              else
+                echo "Skipping VPC $vpc_id (has $INSTANCE_COUNT active instances)"
+              fi
+            fi
+          done
+          
+          echo "Cleanup complete"
+
+      - name: Install tflint
+        run: |
+          curl -sSL https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Run tflint
+        run: |
+          cd ${{ env.TF_WORKING_DIR }}
+          tflint --init || true
+          tflint
+
+      - name: Terraform Validate
+        run: terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      - name: Terraform Apply
+        if: github.ref == 'refs/heads/main'
+        run: |
+          terraform apply -auto-approve tfplan
+          
+          # Force update EKS endpoint access for existing clusters
+          echo "Updating EKS cluster endpoint access..."
+          aws eks update-cluster-config --name eks-backend-v2 --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          aws eks update-cluster-config --name eks-gateway-v2 --resources-vpc-config endpointPublicAccess=true,endpointPrivateAccess=true || true
+          
+          # Wait for endpoint updates and verify AWS access
+          echo "Waiting for endpoint updates to complete..."
+          sleep 300  # 5 minutes wait
+          
+          # Verify AWS credentials and access
+          echo "Verifying AWS access..."
+          aws sts get-caller-identity
+          aws eks describe-cluster --name eks-backend-v2 --query 'cluster.status'
+          aws eks describe-cluster --name eks-gateway-v2 --query 'cluster.status'
+        working-directory: ${{ env.TF_WORKING_DIR }}
+
+      # Import moved earlier to avoid create conflicts
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Install kubeval
+        run: |
+          curl -sLO https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz
+          tar xzf kubeval-linux-amd64.tar.gz
+          sudo mv kubeval /usr/local/bin/
+          rm kubeval-linux-amd64.tar.gz
+
+      - name: Check EKS nodegroups before K8s deployment
+        id: check-nodegroups
+        run: |
+          BACKEND_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-backend-v2 --region us-east-1 --query 'length(nodegroups)' --output text)
+          GATEWAY_NODEGROUPS=$(aws eks list-nodegroups --cluster-name eks-gateway-v2 --region us-east-1 --query 'length(nodegroups)' --output text)
+          echo "backend_nodegroups=$BACKEND_NODEGROUPS" >> $GITHUB_OUTPUT
+          echo "gateway_nodegroups=$GATEWAY_NODEGROUPS" >> $GITHUB_OUTPUT
+          if [ "$BACKEND_NODEGROUPS" -eq "0" ] || [ "$GATEWAY_NODEGROUPS" -eq "0" ]; then
+            echo "WARNING: EKS clusters have no nodegroups yet"
+            echo "Skipping K8s deployment until IAM permissions and service quotas are increased"
+          fi
+
+      - name: Install eksctl
+        run: |
+          curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+          sudo mv /tmp/eksctl /usr/local/bin
+
+      - name: Deploy backend manifests to eks-backend
+        if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
+        run: |
+          BACKEND_SG=$(terraform -chdir=${{ env.TF_WORKING_DIR }} output -raw backend_lb_sg_id || true)
+          
+          # Configure kubectl with proper AWS credentials and region
+          export AWS_DEFAULT_REGION=us-east-1
+          aws sts get-caller-identity
+          
+          # Update kubeconfig using standard AWS CLI
+          aws eks update-kubeconfig --name eks-backend-v2 --region us-east-1 --alias eks-backend-v2
+          
+          # Deploy backend applications
+          echo "Deploying backend applications..."
+          
+          kubeval k8s/backend/namespace.yaml k8s/backend/deployment.yaml k8s/backend/service.yaml k8s/backend/networkpolicy.yaml || true
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/namespace.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/deployment.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/service.yaml
+          kubectl apply --dry-run=client --validate=false -f k8s/backend/networkpolicy.yaml
+          kubectl apply --validate=false -f k8s/backend/namespace.yaml
+          kubectl apply --validate=false -f k8s/backend/deployment.yaml
+          if [ -n "$BACKEND_SG" ]; then
+            sed "s|__BACKEND_SG__|$BACKEND_SG|g" k8s/backend/service.yaml | kubectl apply --validate=false -f -
+          else
+            kubectl apply --validate=false -f k8s/backend/service.yaml
+          fi
+          kubectl apply --validate=false -f k8s/backend/networkpolicy.yaml
+
+      - name: Wait for backend LoadBalancer
+        if: steps.check-nodegroups.outputs.backend_nodegroups != '0'
+        run: |
+          for i in {1..30}; do
+            HOST=$(kubectl -n sentinel get svc backend-svc -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true)
+            if [ -n "$HOST" ]; then echo "LB=$HOST" && break; fi
+            sleep 10
+          done
+          echo "BACKEND_LB=$HOST" >> $GITHUB_ENV
+
+      - name: Deploy gateway manifests to eks-gateway (patch config with backend LB)
+        if: steps.check-nodegroups.outputs.gateway_nodegroups != '0' && steps.check-nodegroups.outputs.backend_nodegroups != '0'
+        run: |
+          # Configure kubectl with proper AWS credentials  
+          export AWS_DEFAULT_REGION=us-east-1
+          aws eks update-kubeconfig --name eks-gateway-v2 --region us-east-1 --alias eks-gateway-v2
+          
+          # Proceed with gateway deployment
+          echo "Deploying gateway applications..."
+          
+          kubectl apply --validate=false -f k8s/gateway/namespace.yaml
+          cat > nginx.conf <<EOF
+          events {}
+          http {
+            upstream backend {
+              server ${BACKEND_LB}:8080;
+            }
+            server {
+              listen 80;
+              location / {
+                proxy_pass http://backend;
+              }
+            }
+          }
+          EOF
+          kubectl -n gateway create configmap proxy-conf --from-file=nginx.conf --dry-run=client -o yaml | kubectl apply --validate=false -f -
+          kubectl apply --validate=false -f k8s/gateway/deployment.yaml
+          kubectl apply --validate=false -f k8s/gateway/service.yaml

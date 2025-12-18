@@ -12,7 +12,7 @@ module "vpc_gateway" {
 # Force recreation of EKS cluster so GitHub Actions user is the creator
 module "eks_gateway" {
   source       = "../../modules/eks"
-  cluster_name = "eks-gateway-v2"
+  cluster_name = "eks-gateway"
   vpc_id       = module.vpc_gateway.vpc_id
   subnet_ids   = module.vpc_gateway.private_subnet_ids
   env          = "gateway"

@@ -12,7 +12,7 @@ module "vpc_backend" {
 # Force recreation of EKS cluster so GitHub Actions user is the creator
 module "eks_backend" {
   source       = "../../modules/eks"
-  cluster_name = "eks-backend-v2"
+  cluster_name = "eks-backend"
   vpc_id       = module.vpc_backend.vpc_id
   subnet_ids   = module.vpc_backend.private_subnet_ids
   env          = "backend"
@@ -29,7 +29,7 @@ resource "aws_security_group" "backend_lb_sg" {
     from_port        = 8080
     to_port          = 8080
     protocol         = "tcp"
-    cidr_blocks      = [module.vpc_gateway.cidr]
+    cidr_blocks      = ["172.16.0.0/16"]  # Gateway VPC CIDR
   }
 
   egress {

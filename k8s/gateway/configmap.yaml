@@ -8,7 +8,8 @@ data:
     events {}
     http {
       upstream backend {
-        server backend-svc.sentinel.svc.cluster.local:8080;
+        # This will be replaced by the CI/CD pipeline with actual LoadBalancer URL
+        server BACKEND_LB_URL:8080;
       }
       server {
         listen 80;

@@ -8,14 +8,14 @@ variable "accepter_vpc_id" {
   type        = string
 }
 
-variable "gateway_private_rtb_id" {
-  description = "Private route table id for gateway VPC"
-  type        = string
+variable "gateway_private_rtb_ids" {
+  description = "Private route table IDs for gateway VPC"
+  type        = list(string)
 }
 
-variable "backend_private_rtb_id" {
-  description = "Private route table id for backend VPC"
-  type        = string
+variable "backend_private_rtb_ids" {
+  description = "Private route table IDs for backend VPC"
+  type        = list(string)
 }
 
 variable "gateway_cidr" {

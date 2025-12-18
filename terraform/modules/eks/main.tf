@@ -4,10 +4,10 @@ module "eks" {
   cluster_name    = var.cluster_name
   cluster_version = "1.29"
   vpc_id          = var.vpc_id
-  subnet_ids      = var.subnet_ids
+  subnet_ids      = var.subnet_ids  # For cluster control plane
   enable_irsa     = true
 
-  # Enable public endpoint access for CI/CD
+  # Enable public endpoint access for CI/CD but nodes in private subnets only
   cluster_endpoint_private_access = true
   cluster_endpoint_public_access  = true
   cluster_endpoint_public_access_cidrs = ["0.0.0.0/0"]
@@ -25,6 +25,9 @@ module "eks" {
       max_size       = 3
       desired_size   = 2
       instance_types = ["t3.medium"]
+      
+      # CRITICAL: Ensure nodes are ONLY in private subnets
+      subnet_ids = var.subnet_ids  # These MUST be private subnet IDs only
     }
   }
 }
