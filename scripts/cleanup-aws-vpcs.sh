@@ -1,3 +1,20 @@
+  # Force-disassociate route tables from subnets before deleting route tables
+  for rtb in $(aws ec2 describe-route-tables --filters Name=vpc-id,Values=$vpc --query "RouteTables[].RouteTableId" --output text); do
+    for assoc in $(aws ec2 describe-route-tables --route-table-ids $rtb --query "RouteTables[].Associations[].RouteTableAssociationId" --output text); do
+      if [ -n "$assoc" ]; then
+        echo "Disassociating route table association: $assoc"
+        aws ec2 disassociate-route-table --association-id "$assoc" || true
+      fi
+    done
+    echo "Deleting route table: $rtb"
+    aws ec2 delete-route-table --route-table-id "$rtb" || true
+  done
+
+  # Delete all security groups except default
+  for sg in $(aws ec2 describe-security-groups --filters Name=vpc-id,Values=$vpc --query "SecurityGroups[?GroupName!='default'].GroupId" --output text); do
+    echo "Deleting security group: $sg"
+    aws ec2 delete-security-group --group-id "$sg" || true
+  done
 #!/bin/bash
     fi
 
