@@ -60,11 +60,7 @@ jobs:
       - name: Validate Kubernetes manifests
         run: |
           echo "Validating Kubernetes manifests..."
-          
-          # Validate backend manifests
           kubectl apply --dry-run=client -f k8s/backend/ || echo "Backend manifest validation completed"
-          
-          # Validate gateway manifests  
           kubectl apply --dry-run=client -f k8s/gateway/ || echo "Gateway manifest validation completed"
 
       - name: Upload Terraform Plan
@@ -103,11 +99,9 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform init
 
-      - name: Download Terraform Plan
-        uses: actions/download-artifact@v3
-        with:
-          name: terraform-plan
-          path: terraform/envs/us-east-1/
+      - name: Terraform targeted apply (VPCs only)
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve -target=module.vpc_gateway -target=module.vpc_backend
 
       - name: Import existing CloudWatch Log Groups
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -120,78 +114,52 @@ jobs:
             module.eks_gateway.module.eks.aws_cloudwatch_log_group.this[0] \
             /aws/eks/eks-gateway/cluster || echo "Gateway log group import skipped or already imported"
 
-      - name: Terraform apply
+      - name: Terraform apply (all resources)
         working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -auto-approve tfplan
+        run: terraform apply -auto-approve
 
       - name: Configure kubectl
         run: |
           echo "Configuring kubectl for both clusters..."
-          
-          # Configure gateway cluster
           aws eks update-kubeconfig --region us-east-1 --name eks-gateway --alias gateway
-          
-          # Configure backend cluster  
           aws eks update-kubeconfig --region us-east-1 --name eks-backend --alias backend
-          
-          # Test connectivity
           kubectl config use-context gateway
           kubectl get nodes
-          
           kubectl config use-context backend
           kubectl get nodes
 
       - name: Deploy Applications
         run: |
           echo "Deploying applications to both clusters..."
-          
-          # Deploy to backend cluster first
           kubectl config use-context backend
           kubectl apply -f k8s/backend/namespace.yaml
           kubectl apply -f k8s/backend/
-          
-          # Wait for backend deployment and get LoadBalancer URL
           kubectl wait --for=condition=available --timeout=300s deployment/backend -n backend
           echo "Waiting for backend LoadBalancer to be ready..."
           kubectl wait --for=jsonpath='{.status.loadBalancer.ingress}' --timeout=600s service/backend-svc -n backend
-          
-          # Get backend LoadBalancer URL with validation
           BACKEND_LB=$(kubectl get service backend-svc -n backend -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
           echo "Backend LoadBalancer: $BACKEND_LB"
-          
-          # Validate we got a valid URL
           if [ -z "$BACKEND_LB" ]; then
             echo "ERROR: Failed to get backend LoadBalancer URL"
             exit 1
           fi
-          
-          # Update gateway configmap with actual backend URL
           sed -i "s/BACKEND_LB_URL/$BACKEND_LB/g" k8s/gateway/configmap.yaml
-          
-          # Deploy to gateway cluster
           kubectl config use-context gateway  
           kubectl apply -f k8s/gateway/namespace.yaml
           kubectl apply -f k8s/gateway/
-          
-          # Wait for gateway deployment
           kubectl wait --for=condition=available --timeout=300s deployment/proxy -n gateway
 
       - name: Verify Deployment
         run: |
           echo "Verifying split architecture deployment..."
-          
-          # Check backend
           kubectl config use-context backend
           kubectl get all -n backend
           echo "Backend LoadBalancer URL:"
           kubectl get service backend-svc -n backend -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
           echo ""
-          
-          # Check gateway
           kubectl config use-context gateway
           kubectl get all -n gateway
           echo "Gateway LoadBalancer URL:"
           kubectl get service proxy-svc -n gateway -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
           echo ""
-          
           echo "Sentinel Split Architecture deployed successfully!"
